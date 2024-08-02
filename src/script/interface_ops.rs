@@ -11,8 +11,6 @@ use crate::utils::error_utils::*;
 use crate::utils::transaction_utils::{
     construct_address, construct_address_temp, construct_address_v0,
 };
-use bincode::de;
-use bincode::serialize;
 use bytes::Bytes;
 use hex::encode;
 use std::collections::BTreeMap;

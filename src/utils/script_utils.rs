@@ -15,8 +15,6 @@ use crate::utils::transaction_utils::{
     construct_address, construct_tx_hash, construct_tx_in_out_signable_hash,
     construct_tx_in_signable_asset_hash, construct_tx_in_signable_hash,
 };
-use bincode::serialize;
-use bytes::Bytes;
 use hex::encode;
 use ring::error;
 use std::collections::{BTreeMap, BTreeSet};

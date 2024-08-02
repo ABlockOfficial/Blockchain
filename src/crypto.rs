@@ -1,9 +1,50 @@
 pub use ring;
-use std::convert::TryInto;
 use tracing::warn;
 
+macro_rules! fixed_bytes_wrapper {
+    ($vis:vis struct $name:ident, $n:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
+        $vis struct $name(crate::utils::serialize_utils::FixedByteArray<$n>);
+
+        impl $name {
+            pub fn from_slice(slice: &[u8]) -> Option<Self> {
+                Some(Self(slice.try_into().ok()?))
+            }
+        }
+
+        impl AsRef<[u8]> for $name {
+            fn as_ref(&self) -> &[u8] {
+                self.0.as_ref()
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                std::fmt::Display::fmt(&self.0, f)
+            }
+        }
+
+        impl std::str::FromStr for $name {
+            type Err = <crate::utils::serialize_utils::FixedByteArray<$n> as std::str::FromStr>::Err;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                <crate::utils::serialize_utils::FixedByteArray<$n> as std::str::FromStr>::from_str(s).map(Self)
+            }
+        }
+
+        #[cfg(test)]
+        impl crate::utils::PlaceholderSeed for $name {
+            fn placeholder_seed_parts<'a>(seed_parts: impl IntoIterator<Item=&'a [u8]>) -> Self {
+                Self(crate::utils::placeholder_bytes(
+                    [ concat!(stringify!($name), ":").as_bytes() ].iter().copied().chain(seed_parts)
+                ).into())
+            }
+        }
+    };
+}
+
 pub mod sign_ed25519 {
-    use super::deserialize_slice;
     pub use ring::signature::Ed25519KeyPair as SecretKeyBase;
     use ring::signature::KeyPair;
     pub use ring::signature::Signature as SignatureBase;
@@ -11,9 +52,7 @@ pub mod sign_ed25519 {
     pub use ring::signature::{ED25519, ED25519_PUBLIC_KEY_LEN};
     use serde::{Deserialize, Serialize};
     use std::convert::TryInto;
-    use tracing::warn;
-
-    pub type PublicKeyBase = <SecretKey as KeyPair>::PublicKey;
+    use crate::crypto::generate_random;
 
     // Constants copied from the ring library
     const SCALAR_LEN: usize = 32;
@@ -21,57 +60,61 @@ pub mod sign_ed25519 {
     const SIGNATURE_LEN: usize = ELEM_LEN + SCALAR_LEN;
     pub const ED25519_SIGNATURE_LEN: usize = SIGNATURE_LEN;
 
-    /// Signature data
-    /// We used sodiumoxide serialization before (treated it as slice with 64 bit length prefix).
-    #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct Signature(
-        #[serde(serialize_with = "<[_]>::serialize")]
-        #[serde(deserialize_with = "deserialize_slice")]
-        [u8; ED25519_SIGNATURE_LEN],
-    );
+    pub const ED25519_SEED_LEN: usize = 32;
 
-    impl Signature {
-        pub fn from_slice(slice: &[u8]) -> Option<Self> {
-            Some(Self(slice.try_into().ok()?))
-        }
-    }
-
-    impl AsRef<[u8]> for Signature {
-        fn as_ref(&self) -> &[u8] {
-            self.0.as_ref()
-        }
-    }
-
-    /// Public key data
-    /// We used sodiumoxide serialization before (treated it as slice with 64 bit length prefix).
-    #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct PublicKey(
-        #[serde(serialize_with = "<[_]>::serialize")]
-        #[serde(deserialize_with = "deserialize_slice")]
-        [u8; ED25519_PUBLIC_KEY_LEN],
-    );
-
-    impl PublicKey {
-        pub fn from_slice(slice: &[u8]) -> Option<Self> {
-            Some(Self(slice.try_into().ok()?))
-        }
-    }
-
-    impl AsRef<[u8]> for PublicKey {
-        fn as_ref(&self) -> &[u8] {
-            self.0.as_ref()
-        }
-    }
+    fixed_bytes_wrapper!(pub struct Signature, ED25519_SIGNATURE_LEN, "Signature data");
+    fixed_bytes_wrapper!(pub struct PublicKey, ED25519_PUBLIC_KEY_LEN, "Public key data");
 
     /// PKCS8 encoded secret key pair
     /// We used sodiumoxide serialization before (treated it as slice with 64 bit length prefix).
     /// Slice and vector are serialized the same.
     #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct SecretKey(Vec<u8>);
+    pub struct SecretKey(#[serde(with = "crate::utils::serialize_utils::vec_codec")] Vec<u8>);
 
     impl SecretKey {
+        /// Constructs a `SecretKey` from the given PKCS8 document.
+        ///
+        /// ### Arguments
+        ///
+        /// * `slice`  - a slice containing the encoded PKCS8 document
         pub fn from_slice(slice: &[u8]) -> Option<Self> {
-            Some(Self(slice.to_vec()))
+            match SecretKeyBase::from_pkcs8(slice) {
+                Ok(_) => Some(Self(slice.to_vec())),
+                Err(_) => None,
+            }
+        }
+
+        /// Gets the public key corresponding to this secret key.
+        pub fn get_public_key(&self) -> PublicKey {
+            let keypair = SecretKeyBase::from_pkcs8(&self.0)
+                .expect("SecretKey contains invalid PKCS8 document?!?");
+
+            PublicKey::from_slice(keypair.public_key().as_ref())
+                .expect("Keypair public key length is invalid?!?")
+        }
+    }
+
+    impl From<ring::pkcs8::Document> for SecretKey {
+        fn from(value: ring::pkcs8::Document) -> Self {
+            Self(value.as_ref().to_vec())
+        }
+    }
+
+    #[cfg(test)]
+    impl crate::utils::PlaceholderSeed for SecretKey {
+        fn placeholder_seed_parts<'a>(seed_parts: impl IntoIterator<Item=&'a [u8]>) -> Self {
+            gen_keypair_from_seed(&crate::utils::placeholder_bytes(
+                [ "SecretKey:".as_bytes() ].iter().copied().chain(seed_parts)
+            )).1
+        }
+    }
+
+    #[cfg(test)]
+    impl crate::utils::PlaceholderSeed for (PublicKey, SecretKey) {
+        fn placeholder_seed_parts<'a>(seed_parts: impl IntoIterator<Item=&'a [u8]>) -> Self {
+            gen_keypair_from_seed(&crate::utils::placeholder_bytes(
+                [ "(PublicKey, SecretKey):".as_bytes() ].iter().copied().chain(seed_parts)
+            ))
         }
     }
 
@@ -87,89 +130,47 @@ pub mod sign_ed25519 {
     }
 
     pub fn sign_detached(msg: &[u8], sk: &SecretKey) -> Signature {
-        let secret = match SecretKeyBase::from_pkcs8(sk.as_ref()) {
-            Ok(secret) => secret,
-            Err(_) => {
-                warn!("Invalid secret key");
-                return Signature([0; ED25519_SIGNATURE_LEN]);
-            }
-        };
+        let keypair = SecretKeyBase::from_pkcs8(sk.as_ref())
+                .expect("Invalid PKCS8 secret key?!?");
 
-        let signature = match secret.sign(msg).as_ref().try_into() {
-            Ok(signature) => signature,
-            Err(_) => {
-                warn!("Invalid signature");
-                return Signature([0; ED25519_SIGNATURE_LEN]);
-            }
-        };
+        let signature = keypair.sign(msg).as_ref().try_into()
+            .expect("Invalid signature?!?");
         Signature(signature)
     }
 
-    pub fn verify_append(sm: &[u8], pk: &PublicKey) -> bool {
-        if sm.len() > ED25519_SIGNATURE_LEN {
-            let start = sm.len() - ED25519_SIGNATURE_LEN;
-            let sig = Signature(match sm[start..].try_into() {
-                Ok(sig) => sig,
-                Err(_) => {
-                    warn!("Invalid signature");
-                    return false;
-                }
-            });
-            let msg = &sm[..start];
-            verify_detached(&sig, msg, pk)
-        } else {
-            false
-        }
-    }
-
-    pub fn sign_append(msg: &[u8], sk: &SecretKey) -> Vec<u8> {
-        let sig = sign_detached(msg, sk);
-        let mut sm = msg.to_vec();
-        sm.extend_from_slice(sig.as_ref());
-        sm
-    }
-
+    /// Generates a completely random Ed25519 keypair.
     pub fn gen_keypair() -> (PublicKey, SecretKey) {
-        let rand = ring::rand::SystemRandom::new();
-        let pkcs8 = match SecretKeyBase::generate_pkcs8(&rand) {
-            Ok(pkcs8) => pkcs8,
-            Err(_) => {
-                warn!("Failed to generate secret key base for pkcs8");
-                return (PublicKey([0; ED25519_PUBLIC_KEY_LEN]), SecretKey(vec![]));
-            }
+        let seed = generate_random();
+        gen_keypair_from_seed(&seed)
+    }
+
+    /// Generates an Ed25519 keypair based on the given seed.
+    ///
+    /// ### Arguments
+    ///
+    /// * `seed`   - the seed to generate the keypair from
+    fn gen_keypair_from_seed(seed: &[u8; ED25519_SEED_LEN]) -> (PublicKey, SecretKey) {
+        let rand = ring::test::rand::FixedSliceSequenceRandom {
+            bytes: &[ seed ],
+            current: core::cell::UnsafeCell::new(0),
         };
 
-        let secret = match SecretKeyBase::from_pkcs8(pkcs8.as_ref()) {
-            Ok(secret) => secret,
-            Err(_) => {
-                warn!("Invalid secret key base");
-                return (PublicKey([0; ED25519_PUBLIC_KEY_LEN]), SecretKey(vec![]));
-            }
-        };
+        let pkcs8 = SecretKeyBase::generate_pkcs8(&rand)
+            .expect("Failed to generate secret key base for pkcs8");
 
-        let pub_key_gen = match secret.public_key().as_ref().try_into() {
-            Ok(pub_key_gen) => pub_key_gen,
-            Err(_) => {
-                warn!("Invalid public key generation");
-                return (PublicKey([0; ED25519_PUBLIC_KEY_LEN]), SecretKey(vec![]));
-            }
-        };
-        let public = PublicKey(pub_key_gen);
-        let secret = match SecretKey::from_slice(pkcs8.as_ref()) {
-            Some(secret) => secret,
-            None => {
-                warn!("Invalid secret key");
-                return (PublicKey([0; ED25519_PUBLIC_KEY_LEN]), SecretKey(vec![]));
-            }
-        };
+        let keypair = SecretKeyBase::from_pkcs8(pkcs8.as_ref())
+            .expect("Generated PKCS8 document is invalid?!?");
 
-        (public, secret)
+        let public_key = PublicKey(keypair.public_key().as_ref().try_into()
+            .expect("Generated keypair contains an invalid public key?!?"));
+        let secret_key = pkcs8.into();
+        (public_key, secret_key)
     }
 }
 
 pub mod secretbox_chacha20_poly1305 {
     // Use key and nonce separately like rust-tls does
-    use super::{deserialize_slice, generate_random};
+    use super::generate_random;
     pub use ring::aead::LessSafeKey as KeyBase;
     pub use ring::aead::Nonce as NonceBase;
     pub use ring::aead::NONCE_LEN;
@@ -179,45 +180,8 @@ pub mod secretbox_chacha20_poly1305 {
 
     pub const KEY_LEN: usize = 256 / 8;
 
-    /// key data
-    #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct Key(
-        #[serde(serialize_with = "<[_]>::serialize")]
-        #[serde(deserialize_with = "deserialize_slice")]
-        [u8; KEY_LEN],
-    );
-
-    impl Key {
-        pub fn from_slice(slice: &[u8]) -> Option<Self> {
-            Some(Self(slice.try_into().ok()?))
-        }
-    }
-
-    impl AsRef<[u8]> for Key {
-        fn as_ref(&self) -> &[u8] {
-            self.0.as_ref()
-        }
-    }
-
-    /// Nonce data
-    #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct Nonce(
-        #[serde(serialize_with = "<[_]>::serialize")]
-        #[serde(deserialize_with = "deserialize_slice")]
-        [u8; NONCE_LEN],
-    );
-
-    impl Nonce {
-        pub fn from_slice(slice: &[u8]) -> Option<Self> {
-            Some(Self(slice.try_into().ok()?))
-        }
-    }
-
-    impl AsRef<[u8]> for Nonce {
-        fn as_ref(&self) -> &[u8] {
-            self.0.as_ref()
-        }
-    }
+    fixed_bytes_wrapper!(pub struct Key, KEY_LEN, "Key data");
+    fixed_bytes_wrapper!(pub struct Nonce, NONCE_LEN, "Nonce data");
 
     pub fn seal(mut plain_text: Vec<u8>, nonce: &Nonce, key: &Key) -> Option<Vec<u8>> {
         let key = get_keybase(key)?;
@@ -249,20 +213,20 @@ pub mod secretbox_chacha20_poly1305 {
     }
 
     fn get_noncebase(nonce: &Nonce) -> NonceBase {
-        NonceBase::assume_unique_for_key(nonce.0)
+        NonceBase::assume_unique_for_key(*nonce.0)
     }
 
     pub fn gen_key() -> Key {
-        Key(generate_random())
+        Key(generate_random().into())
     }
 
     pub fn gen_nonce() -> Nonce {
-        Nonce(generate_random())
+        Nonce(generate_random().into())
     }
 }
 
 pub mod pbkdf2 {
-    use super::{deserialize_slice, generate_random};
+    use super::generate_random;
     use ring::pbkdf2::{derive, PBKDF2_HMAC_SHA256};
     use serde::{Deserialize, Serialize};
     use std::convert::TryInto;
@@ -272,24 +236,7 @@ pub mod pbkdf2 {
     pub const SALT_LEN: usize = 256 / 8;
     pub const OPSLIMIT_INTERACTIVE: u32 = 100_000;
 
-    #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct Salt(
-        #[serde(serialize_with = "<[_]>::serialize")]
-        #[serde(deserialize_with = "deserialize_slice")]
-        [u8; SALT_LEN],
-    );
-
-    impl Salt {
-        pub fn from_slice(slice: &[u8]) -> Option<Self> {
-            Some(Self(slice.try_into().ok()?))
-        }
-    }
-
-    impl AsRef<[u8]> for Salt {
-        fn as_ref(&self) -> &[u8] {
-            self.0.as_ref()
-        }
-    }
+    fixed_bytes_wrapper!(pub struct Salt, SALT_LEN, "Salt data");
 
     pub fn derive_key(key: &mut [u8], passwd: &[u8], salt: &Salt, iterations: u32) {
         let iterations = match NonZeroU32::new(iterations) {
@@ -303,36 +250,78 @@ pub mod pbkdf2 {
     }
 
     pub fn gen_salt() -> Salt {
-        Salt(generate_random())
+        Salt(generate_random().into())
     }
 }
 
 pub mod sha3_256 {
+    use std::convert::TryInto;
+    use std::fmt::{Display, Formatter};
+    use std::ops::Deref;
+    use std::str::FromStr;
+
     pub use sha3::digest::Output;
     pub use sha3::Digest;
     pub use sha3::Sha3_256;
 
-    pub fn digest(data: &[u8]) -> Output<Sha3_256> {
-        Sha3_256::digest(data)
+    pub const HASH_LEN : usize = 256 / 8;
+
+    /// A SHA3-256 hash.
+    #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+    pub struct Hash(
+        [u8; HASH_LEN],
+    );
+
+    impl Hash {
+        pub fn from_slice(slice: &[u8]) -> Option<Self> {
+            Some(Self(slice.try_into().ok()?))
+        }
     }
 
-    pub fn digest_all<'a>(data: impl Iterator<Item = &'a [u8]>) -> Output<Sha3_256> {
+    impl Display for Hash {
+        fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+            f.write_str(&hex::encode(&self.0))
+        }
+    }
+
+    impl FromStr for Hash {
+        type Err = hex::FromHexError;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let mut buf = [0u8; HASH_LEN];
+            match hex::decode_to_slice(s, &mut buf) {
+                Ok(_) => Ok(Self(buf)),
+                Err(e) => Err(e),
+            }
+        }
+    }
+
+    impl AsRef<[u8]> for Hash {
+        fn as_ref(&self) -> &[u8] {
+            &self.0
+        }
+    }
+
+    impl Deref for Hash {
+        type Target = [u8; HASH_LEN];
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    pub fn digest(data: &[u8]) -> Hash {
+        Hash(Sha3_256::digest(data).try_into().unwrap())
+    }
+
+    pub fn digest_all<'a>(data: impl Iterator<Item = &'a [u8]>) -> Hash {
         let mut hasher = Sha3_256::new();
         data.for_each(|v| hasher.update(v));
-        hasher.finalize()
+        Hash(hasher.finalize().try_into().unwrap())
     }
 }
 
-fn deserialize_slice<'de, D: serde::Deserializer<'de>, const N: usize>(
-    deserializer: D,
-) -> Result<[u8; N], D::Error> {
-    let value: &[u8] = serde::Deserialize::deserialize(deserializer)?;
-    value
-        .try_into()
-        .map_err(|_| serde::de::Error::custom("Invalid array in deserialization".to_string()))
-}
-
-pub fn generate_random<const N: usize>() -> [u8; N] {
+fn generate_random<const N: usize>() -> [u8; N] {
     let mut value: [u8; N] = [0; N];
 
     use ring::rand::SecureRandom;
@@ -343,4 +332,83 @@ pub fn generate_random<const N: usize>() -> [u8; N] {
     };
 
     value
+}
+
+#[cfg(test)]
+mod test {
+    use std::fmt::{Debug, Display};
+    use std::str::FromStr;
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
+    use crate::utils::PlaceholderSeed;
+    use super::*;
+
+    fn test_placeholders_different_seed<W: Eq + Debug + PlaceholderSeed>() {
+        let [v0, v1] = W::placeholder_array_seed::<2>([]);
+        assert_eq!(v0, v0);
+        assert_eq!(v1, v1);
+        assert_ne!(v0, v1);
+    }
+
+    fn test_fixed_bytes_wrapper<W: Eq + Debug + Display + FromStr<Err = hex::FromHexError> + PlaceholderSeed + Serialize + DeserializeOwned>(
+        expected_placeholder_hex: &str,
+    ) {
+        let placeholder = W::placeholder_seed([]);
+        assert_eq!(placeholder.to_string(), expected_placeholder_hex);
+        assert_eq!(W::from_str(expected_placeholder_hex).unwrap(), placeholder);
+
+        let expected_json = format!("\"{}\"", expected_placeholder_hex);
+        assert_eq!(serde_json::to_string(&placeholder).unwrap(), expected_json);
+        assert_eq!(serde_json::from_str::<W>(&expected_json).unwrap(), placeholder);
+
+        test_placeholders_different_seed::<W>();
+    }
+
+    #[test]
+    fn test_ed25519_signature() {
+        test_fixed_bytes_wrapper::<sign_ed25519::Signature>(
+            "9c4e2259fc9b47b4c4cf672c7436dc16ace2970955a002b69a495ca96d9dfaf026dbee622284a1cf306a1189af8a462d2ea498d10f14b637c848168b0ba698a7",
+        );
+    }
+
+    #[test]
+    fn test_ed25519_public_key() {
+        test_fixed_bytes_wrapper::<sign_ed25519::PublicKey>(
+            "1d67f7de4c59192568f8e0381fcd1eb9ce044568e4670038e0b42e421540b4f6",
+        );
+    }
+
+    #[test]
+    fn test_ed25519_secret_key() {
+        assert_eq!(hex::encode(sign_ed25519::SecretKey::placeholder_seed([])),
+                   "3053020101300506032b6570042204203651dccde39be8697d8e0690acd90e3b8ce7f596c5f205fbd0b3b3e3a68629e1a12303210092bc778f74110b3fcbcf8a4df71ed9a33c62faa8d01417d381745ef700ef6b73");
+
+        test_placeholders_different_seed::<sign_ed25519::SecretKey>();
+    }
+
+    #[test]
+    fn test_ed25519_keypair() {
+        test_placeholders_different_seed::<(sign_ed25519::PublicKey, sign_ed25519::SecretKey)>();
+    }
+
+    #[test]
+    fn test_chacha20_key() {
+        test_fixed_bytes_wrapper::<secretbox_chacha20_poly1305::Key>(
+            "d2678ac6abff79fa16d2a8f762a3c33b227a519ac1830aee33a19605b7f9cd35",
+        );
+    }
+
+    #[test]
+    fn test_chacha20_nonce() {
+        test_fixed_bytes_wrapper::<secretbox_chacha20_poly1305::Nonce>(
+            "b0980a0a073d6b828fb48ad5",
+        );
+    }
+
+    #[test]
+    fn test_pbkdf2_salt() {
+        test_fixed_bytes_wrapper::<pbkdf2::Salt>(
+            "81c4a8cde605d6b51857eb6ebaead0de98cf254d4855725db7aec45a98699e9c",
+        );
+    }
 }

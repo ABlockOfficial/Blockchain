@@ -8,8 +8,6 @@ use crate::script::interface_ops::*;
 use crate::script::{OpCodes, StackEntry};
 use crate::utils::error_utils::*;
 use crate::utils::transaction_utils::{construct_address, construct_address_for};
-use bincode::serialize;
-use bytes::Bytes;
 use hex::encode;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};

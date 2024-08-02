@@ -8,8 +8,6 @@ use crate::primitives::{
 use crate::script::lang::Script;
 use crate::script::{OpCodes, StackEntry};
 use crate::utils::is_valid_amount;
-use bincode::serialize;
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -208,15 +206,6 @@ impl Transaction {
             version: NETWORK_VERSION as usize,
             druid_info: None,
         }
-    }
-
-    /// Get the total transaction size in bytes
-    pub fn get_total_size(&self) -> usize {
-        let bytes = match serialize(self) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
-        bytes.len()
     }
 
     /// Gets the create asset assigned to this transaction, if it exists
