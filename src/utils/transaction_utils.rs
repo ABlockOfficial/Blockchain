@@ -6,9 +6,9 @@ use crate::primitives::druid::{DdeValues, DruidExpectation};
 use crate::primitives::transaction::*;
 use crate::script::lang::Script;
 use crate::script::{OpCodes, StackEntry};
-use bincode::serialize;
 use std::collections::BTreeMap;
 use tracing::debug;
+use crate::utils::serialize_utils::bincode_encode_to_vec_standard;
 
 pub struct ReceiverInfo {
     pub address: String,
@@ -21,10 +21,7 @@ pub struct ReceiverInfo {
 ///
 /// * `script` - Script to build address for
 pub fn construct_p2sh_address(script: &Script) -> String {
-    let bytes = match serialize(script) {
-        Ok(bytes) => bytes,
-        Err(_) => vec![],
-    };
+    let bytes = bincode::serde::encode_to_vec(script, bincode::config::legacy()).unwrap();
     let mut addr = hex::encode(sha3_256::digest(&bytes));
     addr.insert(ZERO, P2SH_PREPEND as char);
     addr.truncate(STANDARD_ADDRESS_LENGTH);
@@ -344,10 +341,8 @@ pub fn update_utxo_set(current_utxo: &mut BTreeMap<OutPoint, Transaction>) {
 ///
 /// * `tx`  - Transaction to hash
 pub fn construct_tx_hash(tx: &Transaction) -> String {
-    let bytes = match serialize(tx) {
-        Ok(bytes) => bytes,
-        Err(_) => vec![],
-    };
+    // TODO: jrabil: use tx.serialize() once we merge refactor/separate-tx-serialization
+    let bytes = bincode_encode_to_vec_standard(tx).unwrap();
     let mut hash = hex::encode(sha3_256::digest(&bytes));
     hash.insert(ZERO, TX_PREPEND as char);
     hash.truncate(TX_HASH_LENGTH);
@@ -1208,11 +1203,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let bytes = match serialize(&tx_ins) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
-        let from_addr = hex::encode(bytes);
+        let from_addr = construct_tx_ins_address(&tx_ins);
 
         // DDE params
         let druid = hex::encode(vec![1, 2, 3, 4, 5]);

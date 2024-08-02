@@ -1,4 +1,6 @@
 #![allow(unused)]
+
+use bincode::{Decode, Encode};
 use crate::constants::*;
 use crate::crypto::sha3_256;
 use crate::crypto::sign_ed25519::{
@@ -8,8 +10,6 @@ use crate::script::interface_ops::*;
 use crate::script::{OpCodes, StackEntry};
 use crate::utils::error_utils::*;
 use crate::utils::transaction_utils::{construct_address, construct_address_for};
-use bincode::serialize;
-use bytes::Bytes;
 use hex::encode;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
@@ -155,7 +155,8 @@ impl ConditionStack {
 
 /// Scripts are defined as a sequence of stack entries
 /// NOTE: A tuple struct could probably work here as well
-#[derive(Clone, Debug, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[serde(deny_unknown_fields)]
 pub struct Script {
     pub stack: Vec<StackEntry>,
 }

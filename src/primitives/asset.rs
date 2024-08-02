@@ -2,10 +2,11 @@ use crate::primitives::transaction::OutPoint;
 use crate::utils::{add_btreemap, format_for_display, is_valid_amount};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, iter, mem::size_of, ops};
+use bincode::{Decode, Encode};
 use tracing::debug;
 
 /// A structure representing the amount of tokens in an instance
-#[derive(Deserialize, Serialize, Default, Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize, Encode, Decode)]
 pub struct TokenAmount(pub u64);
 
 impl fmt::Display for TokenAmount {
@@ -102,7 +103,8 @@ impl iter::Sum for TokenAmount {
 }
 
 /// Item asset struct
-#[derive(Default, Deserialize, Serialize, Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Default, Debug, Clone, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, Encode, Decode)]
+#[serde(deny_unknown_fields)]
 pub struct ItemAsset {
     pub amount: u64,
     pub genesis_hash: Option<String>,
@@ -124,7 +126,7 @@ impl ItemAsset {
 /// * `Token`   - An asset struct representation of the ZNT token
 /// * `Data`    - A data asset
 /// * `Item` - A item for a payment. The value indicates the number of item assets
-#[derive(Deserialize, Serialize, Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, Encode, Decode)]
 pub enum Asset {
     Token(TokenAmount),
     Item(ItemAsset),
@@ -318,7 +320,8 @@ impl Asset {
 }
 
 /// `AssetValue` struct used to represent the a running total of `Token` and `Item` assets
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
+#[serde(deny_unknown_fields)]
 pub struct AssetValues {
     pub tokens: TokenAmount,
     // Note: Items from create transactions will have `genesis_hash` = `t_hash`

@@ -5,9 +5,10 @@ pub mod lang;
 use crate::crypto::sign_ed25519::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use bincode::{Decode, Encode};
 
 /// Stack entry enum
-#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Encode, Decode)]
 pub enum StackEntry {
     Op(OpCodes),
     Signature(Signature),
@@ -18,7 +19,7 @@ pub enum StackEntry {
 
 /// Opcodes enum
 #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Serialize, Deserialize, Encode, Decode)]
 pub enum OpCodes {
     // constants
     OP_0 = 0x00,

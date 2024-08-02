@@ -8,10 +8,9 @@ use crate::primitives::{
 use crate::script::lang::Script;
 use crate::script::{OpCodes, StackEntry};
 use crate::utils::is_valid_amount;
-use bincode::serialize;
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use bincode::{Decode, Encode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GenesisTxHashSpec {
@@ -31,6 +30,7 @@ impl GenesisTxHashSpec {
 
 /// A user-friendly construction struct for a TxIn
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TxConstructor {
     pub previous_out: OutPoint,
     pub signatures: Vec<Signature>,
@@ -39,7 +39,8 @@ pub struct TxConstructor {
 }
 
 /// An outpoint - a combination of a transaction hash and an index n into its vout
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, Encode, Decode)]
+#[serde(deny_unknown_fields)]
 pub struct OutPoint {
     pub t_hash: String,
     pub n: i32,
@@ -67,7 +68,7 @@ impl Default for OutPoint {
 /// An input of a transaction. It contains the location of the previous
 /// transaction's output that it claims and a signature that matches the
 /// output's public key.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Encode, Decode)]
 pub struct TxIn {
     pub previous_out: Option<OutPoint>,
     pub script_signature: Script,
@@ -120,7 +121,7 @@ impl TxIn {
 /// An output of a transaction. It contains the public key that the next input
 /// must be able to sign with to claim it. It also contains the block hash for the
 /// potential DRS if this is a data asset transaction
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Encode, Decode)]
 pub struct TxOut {
     pub value: Asset,
     pub locktime: u64,
@@ -183,7 +184,7 @@ impl TxOut {
 
 /// The basic transaction that is broadcasted on the network and contained in
 /// blocks. A transaction can contain multiple inputs and outputs.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Encode, Decode)]
 pub struct Transaction {
     pub inputs: Vec<TxIn>,
     pub outputs: Vec<TxOut>,
@@ -208,15 +209,6 @@ impl Transaction {
             version: NETWORK_VERSION as usize,
             druid_info: None,
         }
-    }
-
-    /// Get the total transaction size in bytes
-    pub fn get_total_size(&self) -> usize {
-        let bytes = match serialize(self) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
-        bytes.len()
     }
 
     /// Gets the create asset assigned to this transaction, if it exists
