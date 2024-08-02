@@ -1,4 +1,3 @@
-use crate::crypto::sign_ed25519::{self as sign};
 use crate::primitives::asset::Asset;
 use crate::primitives::{
     asset::TokenAmount,
@@ -7,6 +6,8 @@ use crate::primitives::{
 use crate::script::lang::Script;
 use crate::utils::transaction_utils::{construct_address, construct_tx_in_out_signable_hash};
 use std::collections::BTreeMap;
+use crate::crypto::sign_ed25519;
+use crate::utils::Placeholder;
 
 /// Generate a transaction with valid Script values
 /// and accompanying UTXO set for testing a set of
@@ -29,7 +30,7 @@ pub fn generate_tx_with_ins_and_outs_assets(
     input_assets: &[(u64, Option<&str>, Option<String>)], /* Input amount, genesis_hash, metadata */
     output_assets: &[(u64, Option<&str>)],                /* Input amount, genesis_hash */
 ) -> (BTreeMap<OutPoint, TxOut>, Transaction) {
-    let (pk, sk) = sign::gen_keypair();
+    let (pk, sk) = Placeholder::placeholder();
     let spk = construct_address(&pk);
     let mut tx = Transaction::new();
     let mut utxo_set: BTreeMap<OutPoint, TxOut> = BTreeMap::new();
@@ -63,7 +64,7 @@ pub fn generate_tx_with_ins_and_outs_assets(
             },
             &tx.outputs,
         );
-        let signature = sign::sign_detached(signable_hash.as_bytes(), &sk);
+        let signature = sign_ed25519::sign_detached(signable_hash.as_bytes(), &sk);
         let tx_in = TxIn::new_from_input(
             tx_previous_out.clone(),
             Script::pay2pkh(signable_hash, signature, pk, None),

@@ -2,7 +2,7 @@
 use crate::constants::*;
 use crate::crypto::sha3_256;
 use crate::crypto::sign_ed25519::{
-    self as sign, PublicKey, Signature, ED25519_PUBLIC_KEY_LEN, ED25519_SIGNATURE_LEN,
+    self, PublicKey, Signature, ED25519_PUBLIC_KEY_LEN, ED25519_SIGNATURE_LEN,
 };
 use crate::primitives::asset::{Asset, AssetValues, ItemAsset, TokenAmount};
 use crate::primitives::druid::DruidExpectation;
@@ -328,6 +328,7 @@ mod tests {
     use crate::primitives::asset::Asset;
     use crate::primitives::druid::DdeValues;
     use crate::primitives::transaction::OutPoint;
+    use crate::utils::{Placeholder, PlaceholderSeed};
     use crate::utils::test_utils::generate_tx_with_ins_and_outs_assets;
     use crate::utils::transaction_utils::*;
 
@@ -1919,9 +1920,9 @@ mod tests {
     /// Test OP_SHA3
     fn test_sha3() {
         /// op_sha3([sig]) -> [sha3_256(sig)]
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let msg = hex::encode(vec![0, 0, 0]);
-        let sig = sign::sign_detached(msg.as_bytes(), &sk);
+        let sig = sign_ed25519::sign_detached(msg.as_bytes(), &sk);
         let h = hex::encode(sha3_256::digest(sig.as_ref()));
         let mut stack = Stack::new();
         stack.push(StackEntry::Signature(sig));
@@ -1958,7 +1959,7 @@ mod tests {
     /// Test OP_HASH256
     fn test_hash256() {
         /// op_hash256([pk]) -> [addr]
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let mut stack = Stack::new();
         stack.push(StackEntry::PubKey(pk));
         let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(construct_address(&pk))];
@@ -1974,7 +1975,7 @@ mod tests {
     /// Test OP_HASH256_V0
     fn test_hash256_v0() {
         /// op_hash256_v0([pk]) -> [addr_v0]
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let mut stack = Stack::new();
         stack.push(StackEntry::PubKey(pk));
         let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(construct_address_v0(&pk))];
@@ -1990,7 +1991,7 @@ mod tests {
     /// Test OP_HASH256_TEMP
     fn test_hash256_temp() {
         /// op_hash256_temp([pk]) -> [addr_temp]
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let mut stack = Stack::new();
         stack.push(StackEntry::PubKey(pk));
         let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(construct_address_temp(&pk))];
@@ -2006,13 +2007,13 @@ mod tests {
     /// Test OP_CHECKSIG
     fn test_checksig() {
         /// op_checksig([msg,sig,pk]) -> [1]
-        let (pk, sk) = sign::gen_keypair();
+        let (pk1, sk1) = PlaceholderSeed::placeholder_indexed(1);
         let msg = hex::encode(vec![0, 0, 0]);
-        let sig = sign::sign_detached(msg.as_bytes(), &sk);
+        let sig = sign_ed25519::sign_detached(msg.as_bytes(), &sk1);
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig));
-        stack.push(StackEntry::PubKey(pk));
+        stack.push(StackEntry::PubKey(pk1));
         let mut v: Vec<StackEntry> = vec![StackEntry::Num(1)];
         op_checksig(&mut stack);
         assert_eq!(stack.main_stack, v);
@@ -2022,18 +2023,18 @@ mod tests {
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig));
-        stack.push(StackEntry::PubKey(pk));
+        stack.push(StackEntry::PubKey(pk1));
         let mut v: Vec<StackEntry> = vec![StackEntry::Num(0)];
         op_checksig(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// wrong public key
         /// op_checksig([msg,sig,pk']) -> [0]
-        let (pk, sk) = sign::gen_keypair();
+        let (pk2, sk2) = PlaceholderSeed::placeholder_indexed(2);
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig));
-        stack.push(StackEntry::PubKey(pk));
+        stack.push(StackEntry::PubKey(pk2));
         let mut v: Vec<StackEntry> = vec![StackEntry::Num(0)];
         op_checksig(&mut stack);
         assert_eq!(stack.main_stack, v);
@@ -2041,7 +2042,7 @@ mod tests {
         /// op_checksig([sig,pk]) -> fail
         let mut stack = Stack::new();
         stack.push(StackEntry::Signature(sig));
-        stack.push(StackEntry::PubKey(pk));
+        stack.push(StackEntry::PubKey(pk2));
         let b = op_checksig(&mut stack);
         assert!(!b)
     }
@@ -2050,13 +2051,13 @@ mod tests {
     /// Test OP_CHECKSIGVERIFY
     fn test_checksigverify() {
         /// op_checksigverify([msg,sig,pk]) -> []
-        let (pk, sk) = sign::gen_keypair();
+        let (pk1, sk1) = PlaceholderSeed::placeholder_indexed(1);
         let msg = hex::encode(vec![0, 0, 0]);
-        let sig = sign::sign_detached(msg.as_bytes(), &sk);
+        let sig = sign_ed25519::sign_detached(msg.as_bytes(), &sk1);
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig));
-        stack.push(StackEntry::PubKey(pk));
+        stack.push(StackEntry::PubKey(pk1));
         let mut v: Vec<StackEntry> = vec![];
         op_checksigverify(&mut stack);
         assert_eq!(stack.main_stack, v);
@@ -2066,24 +2067,24 @@ mod tests {
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig));
-        stack.push(StackEntry::PubKey(pk));
+        stack.push(StackEntry::PubKey(pk1));
         let b = op_checksigverify(&mut stack);
         assert!(!b);
         /// wrong public key
         /// op_checksig([msg,sig,pk']) -> fail
-        let (pk, sk) = sign::gen_keypair();
+        let (pk2, sk2) = PlaceholderSeed::placeholder_indexed(2);
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig));
-        stack.push(StackEntry::PubKey(pk));
+        stack.push(StackEntry::PubKey(pk2));
         let b = op_checksigverify(&mut stack);
         assert!(!b);
         /// no message
         /// op_checksigverify([sig,pk]) -> fail
         let mut stack = Stack::new();
         stack.push(StackEntry::Signature(sig));
-        stack.push(StackEntry::PubKey(pk));
+        stack.push(StackEntry::PubKey(pk2));
         let b = op_checksigverify(&mut stack);
         assert!(!b)
     }
@@ -2093,12 +2094,12 @@ mod tests {
     fn test_checkmultisig() {
         /// 2-of-3 multisig
         /// op_checkmultisig([msg,sig1,sig2,2,pk1,pk2,pk3,3]) -> [1]
-        let (pk1, sk1) = sign::gen_keypair();
-        let (pk2, sk2) = sign::gen_keypair();
-        let (pk3, sk3) = sign::gen_keypair();
+        let (pk1, sk1) = PlaceholderSeed::placeholder_indexed(1);
+        let (pk2, sk2) = PlaceholderSeed::placeholder_indexed(2);
+        let (pk3, sk3) = PlaceholderSeed::placeholder_indexed(3);
         let msg = hex::encode(vec![0, 0, 0]);
-        let sig1 = sign::sign_detached(msg.as_bytes(), &sk1);
-        let sig2 = sign::sign_detached(msg.as_bytes(), &sk2);
+        let sig1 = sign_ed25519::sign_detached(msg.as_bytes(), &sk1);
+        let sig2 = sign_ed25519::sign_detached(msg.as_bytes(), &sk2);
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig1));
@@ -2149,7 +2150,7 @@ mod tests {
         /// ordering is not relevant
         /// op_checkmultisig([msg,sig3,sig1,2,pk2,pk3,pk1,3]) -> [1]
         let msg = hex::encode(vec![0, 0, 0]);
-        let sig3 = sign::sign_detached(msg.as_bytes(), &sk3);
+        let sig3 = sign_ed25519::sign_detached(msg.as_bytes(), &sk3);
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig3));
@@ -2246,12 +2247,12 @@ mod tests {
     fn test_checkmultisigverify() {
         /// 2-of-3 multisig
         /// op_checkmultisigverify([msg,sig1,sig2,2,pk1,pk2,pk3,3]) -> []
-        let (pk1, sk1) = sign::gen_keypair();
-        let (pk2, sk2) = sign::gen_keypair();
-        let (pk3, sk3) = sign::gen_keypair();
+        let (pk1, sk1) = Placeholder::placeholder();
+        let (pk2, sk2) = Placeholder::placeholder();
+        let (pk3, sk3) = Placeholder::placeholder();
         let msg = hex::encode(vec![0, 0, 0]);
-        let sig1 = sign::sign_detached(msg.as_bytes(), &sk1);
-        let sig2 = sign::sign_detached(msg.as_bytes(), &sk2);
+        let sig1 = sign_ed25519::sign_detached(msg.as_bytes(), &sk1);
+        let sig2 = sign_ed25519::sign_detached(msg.as_bytes(), &sk2);
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig1));
@@ -2302,7 +2303,7 @@ mod tests {
         /// ordering is not relevant
         /// op_checkmultisigverify([msg,sig3,sig1,2,pk2,pk3,pk1,3]) -> []
         let msg = hex::encode(vec![0, 0, 0]);
-        let sig3 = sign::sign_detached(msg.as_bytes(), &sk3);
+        let sig3 = sign_ed25519::sign_detached(msg.as_bytes(), &sk3);
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(msg));
         stack.push(StackEntry::Signature(sig3));
@@ -2702,8 +2703,8 @@ mod tests {
     fn test_pass_create_script_valid() {
         let asset = Asset::item(1, None, None);
         let asset_hash = construct_tx_in_signable_asset_hash(&asset);
-        let (pk, sk) = sign::gen_keypair();
-        let signature = sign::sign_detached(asset_hash.as_bytes(), &sk);
+        let (pk, sk) = Placeholder::placeholder();
+        let signature = sign_ed25519::sign_detached(asset_hash.as_bytes(), &sk);
 
         let script = Script::new_create_asset(0, asset_hash, signature, pk);
         assert!(tx_has_valid_create_script(&script, &asset));
@@ -2715,8 +2716,8 @@ mod tests {
         let metadata = String::from_utf8_lossy(&[0; MAX_METADATA_BYTES + 1]).to_string();
         let asset = Asset::item(1, None, Some(metadata));
         let asset_hash = construct_tx_in_signable_asset_hash(&asset);
-        let (pk, sk) = sign::gen_keypair();
-        let signature = sign::sign_detached(asset_hash.as_bytes(), &sk);
+        let (pk, sk) = Placeholder::placeholder();
+        let signature = sign_ed25519::sign_detached(asset_hash.as_bytes(), &sk);
 
         let script = Script::new_create_asset(0, asset_hash, signature, pk);
         assert!(!tx_has_valid_create_script(&script, &asset));
@@ -2725,7 +2726,7 @@ mod tests {
     #[test]
     /// Checks whether addresses are validated correctly
     fn test_validate_addresses_correctly() {
-        let (pk, _) = sign::gen_keypair();
+        let (pk, _) = Placeholder::placeholder();
         let address = construct_address(&pk);
 
         assert!(address_has_valid_length(&address));
@@ -2752,9 +2753,9 @@ mod tests {
     }
 
     fn test_pass_member_multisig_valid_common(address_version: Option<u64>) {
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let t_hash = hex::encode(vec![0, 0, 0]);
-        let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
+        let signature = sign_ed25519::sign_detached(t_hash.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: OutPoint::new(t_hash, 0),
@@ -2787,15 +2788,15 @@ mod tests {
     }
 
     fn test_fail_member_multisig_invalid_common(address_version: Option<u64>) {
-        let (_pk, sk) = sign::gen_keypair();
-        let (pk, _sk) = sign::gen_keypair();
+        let (_pk1, sk1) = PlaceholderSeed::placeholder_indexed(1);
+        let (pk2, _sk2) = PlaceholderSeed::placeholder_indexed(2);
         let t_hash = hex::encode(vec![0, 0, 0]);
-        let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
+        let signature = sign_ed25519::sign_detached(t_hash.as_bytes(), &sk1);
 
         let tx_const = TxConstructor {
             previous_out: OutPoint::new(t_hash, 0),
             signatures: vec![signature],
-            pub_keys: vec![pk],
+            pub_keys: vec![pk2],
             address_version,
         };
 
@@ -2811,7 +2812,7 @@ mod tests {
     }
 
     fn test_pass_p2pkh_sig_valid_common(address_version: Option<u64>) {
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let outpoint = OutPoint {
             t_hash: hex::encode(vec![0, 0, 0]),
             n: 0,
@@ -2853,15 +2854,15 @@ mod tests {
     }
 
     fn test_fail_p2pkh_sig_invalid_common(address_version: Option<u64>) {
-        let (pk, sk) = sign::gen_keypair();
-        let (second_pk, _s) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
+        let (second_pk, _s) = Placeholder::placeholder();
         let outpoint = OutPoint {
             t_hash: hex::encode(vec![0, 0, 0]),
             n: 0,
         };
 
         let hash_to_sign = construct_tx_in_signable_hash(&outpoint);
-        let signature = sign::sign_detached(hash_to_sign.as_bytes(), &sk);
+        let signature = sign_ed25519::sign_detached(hash_to_sign.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: outpoint,
@@ -2899,14 +2900,14 @@ mod tests {
     }
 
     fn test_fail_p2pkh_sig_script_empty_common(address_version: Option<u64>) {
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let outpoint = OutPoint {
             t_hash: hex::encode(vec![0, 0, 0]),
             n: 0,
         };
 
         let hash_to_sign = construct_tx_in_signable_hash(&outpoint);
-        let signature = sign::sign_detached(hash_to_sign.as_bytes(), &sk);
+        let signature = sign_ed25519::sign_detached(hash_to_sign.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: outpoint,
@@ -2953,14 +2954,14 @@ mod tests {
     }
 
     fn test_fail_p2pkh_sig_script_invalid_struct_common(address_version: Option<u64>) {
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let outpoint = OutPoint {
             t_hash: hex::encode(vec![0, 0, 0]),
             n: 0,
         };
 
         let hash_to_sign = construct_tx_in_signable_hash(&outpoint);
-        let signature = sign::sign_detached(hash_to_sign.as_bytes(), &sk);
+        let signature = sign_ed25519::sign_detached(hash_to_sign.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: outpoint,
@@ -3011,14 +3012,14 @@ mod tests {
     }
 
     fn test_pass_multisig_validation_valid_common(address_version: Option<u64>) {
-        let (first_pk, first_sk) = sign::gen_keypair();
-        let (second_pk, second_sk) = sign::gen_keypair();
-        let (third_pk, third_sk) = sign::gen_keypair();
+        let (first_pk, first_sk) = Placeholder::placeholder();
+        let (second_pk, second_sk) = Placeholder::placeholder();
+        let (third_pk, third_sk) = Placeholder::placeholder();
         let check_data = hex::encode(vec![0, 0, 0]);
 
         let m = 2;
-        let first_sig = sign::sign_detached(check_data.as_bytes(), &first_sk);
-        let second_sig = sign::sign_detached(check_data.as_bytes(), &second_sk);
+        let first_sig = sign_ed25519::sign_detached(check_data.as_bytes(), &first_sk);
+        let second_sig = sign_ed25519::sign_detached(check_data.as_bytes(), &second_sk);
 
         let tx_const = TxConstructor {
             previous_out: OutPoint::new(check_data, 0),
@@ -3101,7 +3102,7 @@ mod tests {
         //
         // Arrange
         //
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let tx_hash = hex::encode(vec![0, 0, 0]);
         let tx_outpoint = OutPoint::new(tx_hash, 0);
         let script_public_key = construct_address_for(&pk, address_version);
@@ -3114,7 +3115,7 @@ mod tests {
         };
 
         let valid_bytes = construct_tx_in_out_signable_hash(&tx_in, &ongoing_tx_outs.clone());
-        let valid_sig = sign::sign_detached(valid_bytes.as_bytes(), &sk);
+        let valid_sig = sign_ed25519::sign_detached(valid_bytes.as_bytes(), &sk);
 
         // Test cases:
         let inputs = vec![
@@ -3340,10 +3341,10 @@ mod tests {
     }
 
     fn test_fail_interpret_valid_common(address_version: Option<u64>) {
-        let (_pk, sk) = sign::gen_keypair();
-        let (pk, _sk) = sign::gen_keypair();
+        let (_pk, sk) = PlaceholderSeed::placeholder_indexed(0);
+        let (pk, _sk) = PlaceholderSeed::placeholder_indexed(1);
         let t_hash = hex::encode(vec![0, 0, 0]);
-        let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
+        let signature = sign_ed25519::sign_detached(t_hash.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: OutPoint::new(t_hash, 0),
@@ -3376,9 +3377,9 @@ mod tests {
     }
 
     fn test_pass_interpret_valid_common(address_version: Option<u64>) {
-        let (pk, sk) = sign::gen_keypair();
+        let (pk, sk) = Placeholder::placeholder();
         let t_hash = hex::encode(vec![0, 0, 0]);
-        let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
+        let signature = sign_ed25519::sign_detached(t_hash.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: OutPoint::new(t_hash, 0),
