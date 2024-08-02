@@ -782,7 +782,6 @@ mod tests {
         let (_pk, sk) = sign::gen_keypair();
         let (pk, _sk) = sign::gen_keypair();
         let t_hash = vec![0, 0, 0];
-        let signature = sign::sign_detached(&t_hash, &sk);
         let drs_block_hash = hex::encode(vec![1, 2, 3, 4, 5, 6]);
         let mut key_material = BTreeMap::new();
         let prev_out = OutPoint::new(hex::encode(t_hash), 0);
@@ -791,8 +790,6 @@ mod tests {
 
         let tx_const = TxConstructor {
             previous_out: prev_out,
-            signatures: vec![signature],
-            pub_keys: vec![pk],
             address_version,
         };
 
@@ -822,8 +819,6 @@ mod tests {
 
         let tx_const = TxConstructor {
             previous_out: OutPoint::new(spending_tx_hash, 0),
-            signatures: vec![],
-            pub_keys: vec![],
             address_version: Some(NETWORK_VERSION_V0),
         };
 
@@ -863,8 +858,6 @@ mod tests {
 
         let tx_const = TxConstructor {
             previous_out: OutPoint::new(spending_tx_hash, 0),
-            signatures: vec![],
-            pub_keys: vec![],
             address_version: Some(NETWORK_VERSION_V0),
         };
 
@@ -947,7 +940,6 @@ mod tests {
         let (_pk, sk) = sign::gen_keypair();
         let (pk, _sk) = sign::gen_keypair();
         let t_hash = vec![0, 0, 0];
-        let signature = sign::sign_detached(&t_hash, &sk);
         let tokens = TokenAmount(400000);
         let fees = TokenAmount(1000);
         let prev_out = OutPoint::new(hex::encode(t_hash), 0);
@@ -956,8 +948,6 @@ mod tests {
 
         let tx_const = TxConstructor {
             previous_out: prev_out.clone(),
-            signatures: vec![signature],
-            pub_keys: vec![pk],
             address_version: Some(2),
         };
 
@@ -994,7 +984,6 @@ mod tests {
         let (_pk, sk) = sign::gen_keypair();
         let (pk, _sk) = sign::gen_keypair();
         let t_hash = vec![0, 0, 0];
-        let signature = sign::sign_detached(&t_hash, &sk);
         let fees = TokenAmount(1000);
         let prev_out = OutPoint::new(hex::encode(t_hash), 0);
         let mut key_material = BTreeMap::new();
@@ -1002,8 +991,6 @@ mod tests {
 
         let tx_const = TxConstructor {
             previous_out: prev_out.clone(),
-            signatures: vec![signature],
-            pub_keys: vec![pk],
             address_version: Some(2),
         };
 
@@ -1045,15 +1032,12 @@ mod tests {
         let (_pk, sk) = sign::gen_keypair();
         let (pk, _sk) = sign::gen_keypair();
         let t_hash = vec![0, 0, 0];
-        let signature = sign::sign_detached(&t_hash, &sk);
         let prev_out = OutPoint::new(hex::encode(t_hash), 0);
         let mut key_material = BTreeMap::new();
         key_material.insert(prev_out.clone(), (pk, sk));
 
         let tx_const = TxConstructor {
             previous_out: prev_out.clone(),
-            signatures: vec![signature],
-            pub_keys: vec![pk],
             address_version: Some(2),
         };
 
@@ -1101,7 +1085,6 @@ mod tests {
         let (pk, sk) = sign::gen_keypair();
 
         let t_hash_1 = hex::encode(vec![0, 0, 0]);
-        let signed = sign::sign_detached(t_hash_1.as_bytes(), &sk);
 
         let prev_out = OutPoint::new(hex::encode(t_hash_1), 0);
         let mut key_material = BTreeMap::new();
@@ -1109,8 +1092,6 @@ mod tests {
 
         let tx_1 = TxConstructor {
             previous_out: OutPoint::new("".to_string(), 0),
-            signatures: vec![signed],
-            pub_keys: vec![pk],
             address_version,
         };
 
@@ -1133,8 +1114,6 @@ mod tests {
         // Second tx referencing first
         let tx_2 = TxConstructor {
             previous_out: tx_1_out_p.clone(),
-            signatures: vec![signed],
-            pub_keys: vec![pk],
             address_version,
         };
         let tx_ins_2 = construct_payment_tx_ins(vec![tx_2]);
@@ -1182,7 +1161,6 @@ mod tests {
         let (_pk, sk) = sign::gen_keypair();
         let (pk, _sk) = sign::gen_keypair();
         let t_hash = hex::encode(vec![0, 0, 0]);
-        let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
         let prev_out = OutPoint::new(hex::encode(&t_hash), 0);
         let mut key_material = BTreeMap::new();
         key_material.insert(prev_out.clone(), (pk, sk));
@@ -1196,8 +1174,6 @@ mod tests {
 
         let tx_const = TxConstructor {
             previous_out: prev_out.clone(),
-            signatures: vec![signature],
-            pub_keys: vec![pk],
             address_version,
         };
 

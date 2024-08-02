@@ -2658,43 +2658,37 @@ mod tests {
     }
 
     /// Util function to create p2pkh TxIns
-    fn create_multisig_tx_ins(tx_values: Vec<TxConstructor>, m: usize) -> Vec<TxIn> {
-        let mut tx_ins = Vec::new();
-
-        for entry in tx_values {
-            let mut new_tx_in = TxIn::new();
-            new_tx_in.script_signature = Script::multisig_validation(
-                m,
-                entry.pub_keys.len(),
-                entry.previous_out.t_hash.clone(),
-                entry.signatures,
-                entry.pub_keys,
-            );
-            new_tx_in.previous_out = Some(entry.previous_out);
-
-            tx_ins.push(new_tx_in);
-        }
-
-        tx_ins
+    fn create_multisig_tx_ins(tx_values: &[(OutPoint, &[Signature], &[PublicKey])], m: usize) -> Vec<TxIn> {
+        tx_values.iter()
+            .map(|(previous_out, signatures, pub_keys)| {
+                let mut new_tx_in = TxIn::new();
+                new_tx_in.script_signature = Script::multisig_validation(
+                    m,
+                    pub_keys.len(),
+                    previous_out.t_hash.clone(),
+                    signatures.to_vec(),
+                    pub_keys.to_vec(),
+                );
+                new_tx_in.previous_out = Some(previous_out.clone());
+                new_tx_in
+            })
+            .collect()
     }
 
     /// Util function to create multisig member TxIns
-    fn create_multisig_member_tx_ins(tx_values: Vec<TxConstructor>) -> Vec<TxIn> {
-        let mut tx_ins = Vec::new();
-
-        for entry in tx_values {
-            let mut new_tx_in = TxIn::new();
-            new_tx_in.script_signature = Script::member_multisig(
-                entry.previous_out.t_hash.clone(),
-                entry.pub_keys[0],
-                entry.signatures[0],
-            );
-            new_tx_in.previous_out = Some(entry.previous_out);
-
-            tx_ins.push(new_tx_in);
-        }
-
-        tx_ins
+    fn create_multisig_member_tx_ins(tx_values: &[(OutPoint, Signature, PublicKey)]) -> Vec<TxIn> {
+        tx_values.iter()
+            .map(|(previous_out, signature, pub_key)| {
+                let mut new_tx_in = TxIn::new();
+                new_tx_in.script_signature = Script::member_multisig(
+                    previous_out.t_hash.clone(),
+                    pub_key.clone(),
+                    signature.clone(),
+                );
+                new_tx_in.previous_out = Some(previous_out.clone());
+                new_tx_in
+            })
+            .collect()
     }
 
     #[test]
@@ -2756,14 +2750,9 @@ mod tests {
         let t_hash = hex::encode(vec![0, 0, 0]);
         let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
 
-        let tx_const = TxConstructor {
-            previous_out: OutPoint::new(t_hash, 0),
-            signatures: vec![signature],
-            pub_keys: vec![pk],
-            address_version,
-        };
+        let tx_const = (OutPoint::new(t_hash, 0), signature, pk);
 
-        let tx_ins = create_multisig_member_tx_ins(vec![tx_const]);
+        let tx_ins = create_multisig_member_tx_ins(&[tx_const]);
 
         assert!(&tx_ins[0].clone().script_signature.interpret());
     }
@@ -2792,14 +2781,9 @@ mod tests {
         let t_hash = hex::encode(vec![0, 0, 0]);
         let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
 
-        let tx_const = TxConstructor {
-            previous_out: OutPoint::new(t_hash, 0),
-            signatures: vec![signature],
-            pub_keys: vec![pk],
-            address_version,
-        };
+        let tx_const = (OutPoint::new(t_hash, 0), signature, pk);
 
-        let tx_ins = create_multisig_member_tx_ins(vec![tx_const]);
+        let tx_ins = create_multisig_member_tx_ins(&[tx_const]);
 
         assert!(!&tx_ins[0].clone().script_signature.interpret());
     }
@@ -2821,8 +2805,6 @@ mod tests {
 
         let tx_const = TxConstructor {
             previous_out: outpoint,
-            signatures: vec![],
-            pub_keys: vec![pk],
             address_version,
         };
 
@@ -2861,12 +2843,9 @@ mod tests {
         };
 
         let hash_to_sign = construct_tx_in_signable_hash(&outpoint);
-        let signature = sign::sign_detached(hash_to_sign.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: outpoint,
-            signatures: vec![signature],
-            pub_keys: vec![second_pk],
             address_version,
         };
 
@@ -2906,12 +2885,9 @@ mod tests {
         };
 
         let hash_to_sign = construct_tx_in_signable_hash(&outpoint);
-        let signature = sign::sign_detached(hash_to_sign.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: outpoint,
-            signatures: vec![signature],
-            pub_keys: vec![pk],
             address_version,
         };
 
@@ -2960,12 +2936,9 @@ mod tests {
         };
 
         let hash_to_sign = construct_tx_in_signable_hash(&outpoint);
-        let signature = sign::sign_detached(hash_to_sign.as_bytes(), &sk);
 
         let tx_const = TxConstructor {
             previous_out: outpoint,
-            signatures: vec![signature],
-            pub_keys: vec![pk],
             address_version,
         };
 
@@ -3020,14 +2993,9 @@ mod tests {
         let first_sig = sign::sign_detached(check_data.as_bytes(), &first_sk);
         let second_sig = sign::sign_detached(check_data.as_bytes(), &second_sk);
 
-        let tx_const = TxConstructor {
-            previous_out: OutPoint::new(check_data, 0),
-            signatures: vec![first_sig, second_sig],
-            pub_keys: vec![first_pk, second_pk, third_pk],
-            address_version,
-        };
-
-        let tx_ins = create_multisig_tx_ins(vec![tx_const], m);
+        let tx_ins = create_multisig_tx_ins(&[
+            (OutPoint::new(check_data, 0), &[first_sig, second_sig], &[first_pk, second_pk, third_pk]),
+        ], m);
 
         assert!(&tx_ins[0].script_signature.interpret());
     }
@@ -3345,14 +3313,9 @@ mod tests {
         let t_hash = hex::encode(vec![0, 0, 0]);
         let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
 
-        let tx_const = TxConstructor {
-            previous_out: OutPoint::new(t_hash, 0),
-            signatures: vec![signature],
-            pub_keys: vec![pk],
-            address_version,
-        };
+        let tx_const = (OutPoint::new(t_hash, 0), signature, pk);
 
-        let tx_ins = create_multisig_member_tx_ins(vec![tx_const]);
+        let tx_ins = create_multisig_member_tx_ins(&[tx_const]);
 
         assert!(!&tx_ins[0].clone().script_signature.interpret());
     }
@@ -3380,14 +3343,9 @@ mod tests {
         let t_hash = hex::encode(vec![0, 0, 0]);
         let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
 
-        let tx_const = TxConstructor {
-            previous_out: OutPoint::new(t_hash, 0),
-            signatures: vec![signature],
-            pub_keys: vec![pk],
-            address_version,
-        };
+        let tx_const = (OutPoint::new(t_hash, 0), signature, pk);
 
-        let tx_ins = create_multisig_member_tx_ins(vec![tx_const]);
+        let tx_ins = create_multisig_member_tx_ins(&[tx_const]);
 
         assert!(&tx_ins[0].clone().script_signature.interpret());
     }

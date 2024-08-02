@@ -33,8 +33,6 @@ impl GenesisTxHashSpec {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxConstructor {
     pub previous_out: OutPoint,
-    pub signatures: Vec<Signature>,
-    pub pub_keys: Vec<PublicKey>,
     pub address_version: Option<u64>,
 }
 
