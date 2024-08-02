@@ -601,7 +601,7 @@ pub fn op_cat(stack: &mut Stack) -> bool {
         error_item_size(op);
         return false;
     }
-    let cat = [s1, s2].join("");
+    let cat = [s1, s2].concat();
     stack.push(StackEntry::Bytes(cat))
 }
 
@@ -648,6 +648,10 @@ pub fn op_substr(stack: &mut Stack) -> bool {
             return false;
         }
     };
+    // TODO: As this was previously a hex string, the indices don't exactly correspond to what
+    //       they did originally. However, I don't think there are any existing transactions
+    //       on the chain which actually use this opcode, so I'm fairly confident it won't
+    //       matter. Double-check that this is the case before merging!
     if n1 >= s.len() {
         error_item_index(op);
         return false;
@@ -660,7 +664,7 @@ pub fn op_substr(stack: &mut Stack) -> bool {
         error_item_index(op);
         return false;
     }
-    let substr = s[n1..n1 + n2].to_string();
+    let substr = s[n1..n1 + n2].to_vec();
     stack.push(StackEntry::Bytes(substr))
 }
 
@@ -700,7 +704,11 @@ pub fn op_left(stack: &mut Stack) -> bool {
     if n >= s.len() {
         stack.push(StackEntry::Bytes(s))
     } else {
-        let left = s[..n].to_string();
+        // TODO: As this was previously a hex string, the indices don't exactly correspond to what
+        //       they did originally. However, I don't think there are any existing transactions
+        //       on the chain which actually use this opcode, so I'm fairly confident it won't
+        //       matter. Double-check that this is the case before merging!
+        let left = s[..n].to_vec();
         stack.push(StackEntry::Bytes(left))
     }
 }
@@ -739,9 +747,13 @@ pub fn op_right(stack: &mut Stack) -> bool {
         }
     };
     if n >= s.len() {
-        stack.push(StackEntry::Bytes("".to_string()))
+        stack.push(StackEntry::Bytes(Vec::new()))
     } else {
-        let right = s[n..].to_string();
+        // TODO: As this was previously a hex string, the indices don't exactly correspond to what
+        //       they did originally. However, I don't think there are any existing transactions
+        //       on the chain which actually use this opcode, so I'm fairly confident it won't
+        //       matter. Double-check that this is the case before merging!
+        let right = s[n..].to_vec();
         stack.push(StackEntry::Bytes(right))
     }
 }
@@ -756,8 +768,8 @@ pub fn op_right(stack: &mut Stack) -> bool {
 pub fn op_size(stack: &mut Stack) -> bool {
     let (op, desc) = (OPSIZE, OPSIZE_DESC);
     trace(op, desc);
-    let s = match stack.last() {
-        Some(StackEntry::Bytes(s)) => s,
+    let len = match stack.last() {
+        Some(StackEntry::Bytes(s)) => s.len(),
         Some(_) => {
             error_item_type(op);
             return false;
@@ -767,7 +779,11 @@ pub fn op_size(stack: &mut Stack) -> bool {
             return false;
         }
     };
-    stack.push(StackEntry::Num(s.len()))
+    // TODO: As this was previously a hex string, the length doesn't exactly correspond to what
+    //       it did originally. However, I don't think there are any existing transactions
+    //       on the chain which actually use this opcode, so I'm fairly confident it won't
+    //       matter. Double-check that this is the case before merging!
+    stack.push(StackEntry::Num(len))
 }
 
 /*---- BITWISE LOGIC OPS ----*/
@@ -1924,7 +1940,11 @@ pub fn op_sha3(stack: &mut Stack) -> bool {
     let data = match stack.pop() {
         Some(StackEntry::Signature(sig)) => sig.as_ref().to_owned(),
         Some(StackEntry::PubKey(pk)) => pk.as_ref().to_owned(),
-        Some(StackEntry::Bytes(s)) => s.as_bytes().to_owned(),
+        Some(StackEntry::Bytes(s)) => {
+            // For legacy reasons, the hashed data is the hex representation of the data rather than
+            // the data itself.
+            hex::encode(&s).as_bytes().to_owned()
+        },
         Some(_) => {
             error_item_type(op);
             return false;
@@ -1934,7 +1954,8 @@ pub fn op_sha3(stack: &mut Stack) -> bool {
             return false;
         }
     };
-    let hash = hex::encode(sha3_256::digest(&data));
+    let hash = sha3_256::digest(&data).to_vec();
+    // TODO: Originally, the hash was converted back to hex!
     stack.push(StackEntry::Bytes(hash))
 }
 
@@ -1960,7 +1981,7 @@ pub fn op_hash256(stack: &mut Stack) -> bool {
         }
     };
     let addr = construct_address(&pk);
-    stack.push(StackEntry::Bytes(addr))
+    stack.push(StackEntry::Bytes(hex::decode(addr).unwrap()))
 }
 
 /// OP_HASH256_V0: Creates v0 address from public key and pushes it onto the stack
@@ -1989,7 +2010,7 @@ pub fn op_hash256_v0(stack: &mut Stack) -> bool {
         }
     };
     let addr_v0 = construct_address_v0(&pk);
-    stack.push(StackEntry::Bytes(addr_v0))
+    stack.push(StackEntry::Bytes(hex::decode(addr_v0).unwrap()))
 }
 
 /// OP_HASH256_TEMP: Creates temporary address from public key and pushes it onto the stack
@@ -2018,7 +2039,7 @@ pub fn op_hash256_temp(stack: &mut Stack) -> bool {
         }
     };
     let addr_temp = construct_address_temp(&pk);
-    stack.push(StackEntry::Bytes(addr_temp))
+    stack.push(StackEntry::Bytes(hex::decode(addr_temp).unwrap()))
 }
 
 /// OP_CHECKSIG: Pushes ONE onto the stack if the signature is valid, ZERO otherwise
@@ -2067,8 +2088,13 @@ pub fn op_checksig(stack: &mut Stack) -> bool {
             return false;
         }
     };
-    trace!("Signature: {:?}", hex::encode(sig));
-    if (!sign::verify_detached(&sig, msg.as_bytes(), &pk)) {
+
+    // For legacy reasons, the signed message is the hex representation of the message rather than
+    // the message itself.
+    let msg_hex = hex::encode(msg);
+
+    trace!("Signature: {:?}", msg_hex);
+    if (!sign::verify_detached(&sig, msg_hex.as_bytes(), &pk)) {
         trace!("Signature verification failed");
         stack.push(StackEntry::Num(ZERO))
     } else {
@@ -2121,8 +2147,13 @@ pub fn op_checksigverify(stack: &mut Stack) -> bool {
             return false;
         }
     };
-    trace!("Signature: {:?}", hex::encode(sig));
-    if (!sign::verify_detached(&sig, msg.as_bytes(), &pk)) {
+
+    // For legacy reasons, the signed message is the hex representation of the message rather than
+    // the message itself.
+    let msg_hex = hex::encode(msg);
+
+    trace!("Signature: {:?}", msg_hex);
+    if (!sign::verify_detached(&sig, msg_hex.as_bytes(), &pk)) {
         trace!("Signature verification failed");
         error_invalid_signature(op);
         return false;
@@ -2298,13 +2329,17 @@ pub fn op_checkmultisigverify(stack: &mut Stack) -> bool {
 /// * `sigs` - signatures to verify
 /// * `msg`  - data to verify against
 /// * `pks`  - public keys to match against
-fn verify_multisig(sigs: &[Signature], msg: &String, pks: &mut Vec<PublicKey>) -> bool {
+fn verify_multisig(sigs: &[Signature], msg: &[u8], pks: &mut Vec<PublicKey>) -> bool {
+    // For legacy reasons, the signed message is the hex representation of the message rather than
+    // the message itself.
+    let msg_hex = hex::encode(msg);
+
     let mut num_valid_sigs = ZERO;
     for sig in sigs {
         if let Some((index, _)) = pks
             .iter()
             .enumerate()
-            .find(|(_, pk)| sign::verify_detached(sig, msg.as_bytes(), pk))
+            .find(|(_, pk)| sign::verify_detached(sig, msg_hex.as_bytes(), pk))
         {
             num_valid_sigs += ONE;
             pks.remove(index);

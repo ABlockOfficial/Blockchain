@@ -12,8 +12,9 @@ pub enum StackEntry {
     Op(OpCodes),
     Signature(Signature),
     PubKey(PublicKey),
+    // TODO: This should probably be u64, as usize doesn't have a consistent range on all platforms
     Num(usize),
-    Bytes(String),
+    Bytes(Vec<u8>),
 }
 
 /// Opcodes enum

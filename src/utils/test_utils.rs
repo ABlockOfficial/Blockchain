@@ -66,7 +66,7 @@ pub fn generate_tx_with_ins_and_outs_assets(
         let signature = sign::sign_detached(signable_hash.as_bytes(), &sk);
         let tx_in = TxIn::new_from_input(
             tx_previous_out.clone(),
-            Script::pay2pkh(signable_hash, signature, pk, None),
+            Script::pay2pkh(hex::decode(&signable_hash).unwrap(), signature, pk, None),
         );
         utxo_set.insert(tx_previous_out, tx_in_previous_out);
         tx.inputs.push(tx_in);

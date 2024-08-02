@@ -162,7 +162,7 @@ pub fn get_stack_entry_signable_string(entry: &StackEntry) -> String {
         }
         StackEntry::PubKey(pub_key) => format!("PubKey:{}", hex::encode(pub_key.as_ref())),
         StackEntry::Num(num) => format!("Num:{num}"),
-        StackEntry::Bytes(bytes) => format!("Bytes:{bytes}"),
+        StackEntry::Bytes(bytes) => format!("Bytes:{}", hex::encode(bytes)),
     }
 }
 
@@ -592,7 +592,7 @@ pub fn update_input_signatures(
             let sk = &key_material.get(&previous_out.unwrap()).unwrap().1;
 
             let script_signature = Script::pay2pkh(
-                signable_hash.clone(),
+                hex::decode(&signable_hash).unwrap(),
                 sign_detached(signable_hash.as_bytes(), sk),
                 pk,
                 None,
@@ -1509,7 +1509,7 @@ mod tests {
                     Signature::from_slice(hex::decode(signatures[n]).unwrap().as_ref()).unwrap();
                 let pk = PublicKey::from_slice(hex::decode(pub_keys[n]).unwrap().as_ref()).unwrap();
 
-                let script = Script::pay2pkh(sig_data, sig, pk, None);
+                let script = Script::pay2pkh(hex::decode(&sig_data).unwrap(), sig, pk, None);
                 let out_p = previous_out_points[n].clone();
 
                 TxIn::new_from_input(out_p, script)

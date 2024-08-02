@@ -10,7 +10,6 @@ use crate::utils::error_utils::*;
 use crate::utils::transaction_utils::{construct_address, construct_address_for};
 use bincode::serialize;
 use bytes::Bytes;
-use hex::encode;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
@@ -375,7 +374,7 @@ impl Script {
             StackEntry::Op(OpCodes::OP_CREATE),
             StackEntry::Num(block_number as usize),
             StackEntry::Op(OpCodes::OP_DROP),
-            StackEntry::Bytes(asset_hash),
+            StackEntry::Bytes(hex::decode(asset_hash).expect("asset_hash contains non-hex characters")),
             StackEntry::Signature(signature),
             StackEntry::PubKey(pub_key),
             StackEntry::Op(OpCodes::OP_CHECKSIG),
@@ -391,7 +390,7 @@ impl Script {
     /// * `signature`   - Signature of check data
     /// * `pub_key`     - Public key of the payer
     pub fn pay2pkh(
-        check_data: String,
+        check_data: Vec<u8>,
         signature: Signature,
         pub_key: PublicKey,
         address_version: Option<u64>,
@@ -407,7 +406,8 @@ impl Script {
             StackEntry::PubKey(pub_key),
             StackEntry::Op(OpCodes::OP_DUP),
             StackEntry::Op(op_hash_256),
-            StackEntry::Bytes(construct_address_for(&pub_key, address_version)),
+            StackEntry::Bytes(hex::decode(construct_address_for(&pub_key, address_version))
+                .expect("address contains non-hex characters?")),
             StackEntry::Op(OpCodes::OP_EQUALVERIFY),
             StackEntry::Op(OpCodes::OP_CHECKSIG),
         ];
@@ -421,7 +421,7 @@ impl Script {
     /// * `check_data`  - Data to be signed for verification
     /// * `pub_key`     - Public key of this party
     /// * `signature`   - Signature of this party
-    pub fn member_multisig(check_data: String, pub_key: PublicKey, signature: Signature) -> Self {
+    pub fn member_multisig(check_data: Vec<u8>, pub_key: PublicKey, signature: Signature) -> Self {
         let stack = vec![
             StackEntry::Bytes(check_data),
             StackEntry::Signature(signature),
@@ -439,7 +439,7 @@ impl Script {
     /// * `n`           - Number of valid signatures total
     /// * `check_data`  - Data to have checked against signatures
     /// * `pub_keys`    - The constituent public keys
-    pub fn multisig_lock(m: usize, n: usize, check_data: String, pub_keys: Vec<PublicKey>) -> Self {
+    pub fn multisig_lock(m: usize, n: usize, check_data: Vec<u8>, pub_keys: Vec<PublicKey>) -> Self {
         let mut stack = vec![StackEntry::Bytes(check_data), StackEntry::Num(m)];
         stack.append(&mut pub_keys.iter().map(|e| StackEntry::PubKey(*e)).collect());
         stack.push(StackEntry::Num(n));
@@ -453,7 +453,7 @@ impl Script {
     ///
     /// * `check_data`  - Data to have signed
     /// * `signatures`  - Signatures to unlock with
-    pub fn multisig_unlock(check_data: String, signatures: Vec<Signature>) -> Self {
+    pub fn multisig_unlock(check_data: Vec<u8>, signatures: Vec<Signature>) -> Self {
         let mut stack = vec![StackEntry::Bytes(check_data)];
         stack.append(
             &mut signatures
@@ -475,7 +475,7 @@ impl Script {
     pub fn multisig_validation(
         m: usize,
         n: usize,
-        check_data: String,
+        check_data: Vec<u8>,
         signatures: Vec<Signature>,
         pub_keys: Vec<PublicKey>,
     ) -> Self {
