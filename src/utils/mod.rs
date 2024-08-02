@@ -49,3 +49,41 @@ pub fn add_btreemap<E: Ord, T: Copy + std::ops::AddAssign>(
     });
     m1
 }
+
+/// A trait which indicates that a type can be represented by an ordinal number.
+pub trait ToOrdinal {
+    /// Gets the ordinal number from a value.
+    fn to_ordinal(&self) -> u32;
+}
+
+/// A trait which indicates that a type can be instantiated from an ordinal number.
+pub trait FromOrdinal : Sized {
+    /// A slice containing every valid ordinal number.
+    const ALL_ORDINALS : &'static [u32];
+
+    /// Gets the value corresponding to the given ordinal number.
+    ///
+    /// ### Arguments
+    ///
+    /// * `ordinal` - The ordinal number
+    fn from_ordinal(ordinal: u32) -> Result<Self, u32>;
+}
+
+/// A trait which indicates that a type can be represented by a string name.
+pub trait ToName {
+    /// Gets a value's string name.
+    fn to_name(&self) -> &'static str;
+}
+
+/// A trait which indicates that a type can be instantiated from a string name.
+pub trait FromName : Sized {
+    /// A slice containing every valid name.
+    const ALL_NAMES : &'static [&'static str];
+
+    /// Gets the value corresponding to the given name.
+    ///
+    /// ### Arguments
+    ///
+    /// * `name` - The name
+    fn from_name(name: &str) -> Result<Self, &str>;
+}
