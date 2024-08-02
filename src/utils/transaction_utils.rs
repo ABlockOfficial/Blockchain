@@ -20,15 +20,17 @@ pub struct ReceiverInfo {
 /// ### Arguments
 ///
 /// * `script` - Script to build address for
+#[allow(unused_variables)]
 pub fn construct_p2sh_address(script: &Script) -> String {
-    let bytes = match serialize(script) {
+    /*let bytes = match serialize(script) {
         Ok(bytes) => bytes,
         Err(_) => vec![],
     };
     let mut addr = hex::encode(sha3_256::digest(&bytes));
     addr.insert(ZERO, P2SH_PREPEND as char);
     addr.truncate(STANDARD_ADDRESS_LENGTH);
-    addr
+    addr*/
+    todo!("P2SH not yet supported!")
 }
 
 /// Builds an address from a public key and a specified network version
@@ -448,6 +450,7 @@ pub fn construct_payment_tx(
 /// * `drs_block_hash`      - Hash of the block containing the original DRS. Only for data trades
 /// * `asset`               - Asset to send
 /// * `locktime`            - Block height below which the payment is restricted. "0" means no locktime
+#[allow(unused_variables)]
 pub fn construct_p2sh_tx(
     tx_ins: Vec<TxIn>,
     fee: Option<ReceiverInfo>,
@@ -456,7 +459,7 @@ pub fn construct_p2sh_tx(
     locktime: u64,
     key_material: &BTreeMap<OutPoint, (PublicKey, SecretKey)>,
 ) -> Transaction {
-    let script_hash = construct_p2sh_address(script);
+    /*let script_hash = construct_p2sh_address(script);
 
     let tx_out = TxOut {
         value: asset,
@@ -466,7 +469,8 @@ pub fn construct_p2sh_tx(
     let tx_outs = vec![tx_out];
     let final_tx_ins = update_input_signatures(&tx_ins, &tx_outs, key_material);
 
-    construct_tx_core(final_tx_ins, tx_outs, fee)
+    construct_tx_core(final_tx_ins, tx_outs, fee)*/
+    todo!("P2SH not yet supported!")
 }
 
 /// Constructs a P2SH transaction to burn tokens
@@ -707,8 +711,9 @@ pub fn construct_payment_tx_ins(tx_values: Vec<TxConstructor>) -> Vec<TxIn> {
 ///
 /// * `tx_values`   - Series of values required for TxIn construction
 /// * `script`      - Script to be used in the scriptSig
+#[allow(unused_variables)]
 pub fn construct_p2sh_redeem_tx_ins(tx_values: TxConstructor, script: Script) -> Vec<TxIn> {
-    let mut tx_ins = Vec::new();
+    /*let mut tx_ins = Vec::new();
     let previous_out = Some(tx_values.previous_out);
 
     tx_ins.push(TxIn {
@@ -716,7 +721,8 @@ pub fn construct_p2sh_redeem_tx_ins(tx_values: TxConstructor, script: Script) ->
         script_signature: script,
     });
 
-    tx_ins
+    tx_ins*/
+    todo!("P2SH not yet supported!")
 }
 
 /// Constructs a dual double entry tx
@@ -751,8 +757,7 @@ mod tests {
     use super::*;
     use crate::crypto::sign_ed25519::{self as sign, Signature};
     use crate::primitives::asset::{AssetValues, ItemAsset, TokenAmount};
-    use crate::script::OpCodes;
-    use crate::utils::script_utils::{tx_has_valid_p2sh_script, tx_outs_are_valid};
+    use crate::utils::script_utils::tx_outs_are_valid;
 
     #[test]
     // Creates a valid payment transaction
@@ -802,8 +807,9 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
     fn test_construct_a_valid_p2sh_tx() {
-        let token_amount = TokenAmount(400000);
+        /*let token_amount = TokenAmount(400000);
         let (tx_ins, _drs_block_hash, key_material) =
             test_construct_valid_inputs(Some(NETWORK_VERSION_V0));
         let mut script = Script::new_for_coinbase(10);
@@ -846,14 +852,16 @@ mod tests {
         assert!(tx_has_valid_p2sh_script(
             &redeeming_tx.inputs[0].script_signature,
             p2sh_tx.outputs[0].script_public_key.as_ref().unwrap()
-        ));
+        ));*/
+        todo!("P2SH not yet supported!")
 
         // TODO: Add assertion for full tx validity
     }
 
     #[test]
+    #[should_panic]
     fn test_construct_a_valid_burn_tx() {
-        let token_amount = TokenAmount(400000);
+        /*let token_amount = TokenAmount(400000);
         let (tx_ins, _drs_block_hash, key_material) =
             test_construct_valid_inputs(Some(NETWORK_VERSION_V0));
 
@@ -891,7 +899,8 @@ mod tests {
         assert!(!tx_has_valid_p2sh_script(
             &redeeming_tx.inputs[0].script_signature,
             burn_tx.outputs[0].script_public_key.as_ref().unwrap()
-        ));
+        ));*/
+        todo!("P2SH not yet supported")
 
         // TODO: Add assertion for full tx validity
     }

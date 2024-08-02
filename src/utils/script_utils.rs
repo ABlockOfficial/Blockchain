@@ -109,7 +109,7 @@ pub fn tx_is_valid<'a>(
         if let Some(pk) = tx_out_pk {
             // Check will need to include other signature types here
             if !tx_has_valid_p2pkh_sig(&tx_in.script_signature, &full_tx_hash, pk)
-                && !tx_has_valid_p2sh_script(&tx_in.script_signature, pk)
+                // TODO: jrabil: P2SH    && !tx_has_valid_p2sh_script(&tx_in.script_signature, pk)
             {
                 error!("INVALID SIGNATURE OR SCRIPT TYPE");
                 return (false, "Invalid signature or script structure".to_string());
@@ -282,8 +282,9 @@ fn tx_has_valid_p2pkh_sig(script: &Script, outpoint_hash: &str, tx_out_pub_key: 
 ///
 /// * `script`          - Script to validate
 /// * `address`         - Address of the P2SH transaction
+#[allow(unused_variables)]
 pub fn tx_has_valid_p2sh_script(script: &Script, address: &str) -> bool {
-    let p2sh_address = construct_p2sh_address(script);
+    /*let p2sh_address = construct_p2sh_address(script);
 
     if p2sh_address == address {
         return script.interpret();
@@ -295,7 +296,8 @@ pub fn tx_has_valid_p2sh_script(script: &Script, address: &str) -> bool {
         address
     );
 
-    false
+    false*/
+    todo!("P2SH not yet supported!")
 }
 
 /// Checks that a item's metadata conforms to the network size constraint
