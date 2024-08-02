@@ -5,7 +5,6 @@ pub const MAX_METADATA_BYTES: usize = 800;
 pub const TX_HASH_LENGTH: usize = 32;
 
 /*------- ADDRESS CONSTANTS -------*/
-pub const V0_ADDRESS_LENGTH: usize = 16;
 pub const STANDARD_ADDRESS_LENGTH: usize = 64;
 // Prepending character for a P2SH address
 pub const P2SH_PREPEND: u8 = b'H';
@@ -14,11 +13,6 @@ pub const P2SH_PREPEND: u8 = b'H';
 // Current network version: Always bump immediately after a version is deployed.
 pub const NETWORK_VERSION: u32 = 6;
 pub const NETWORK_VERSION_SERIALIZED: &[u8] = b"6";
-// Network version 0
-pub const NETWORK_VERSION_V0: u64 = 0;
-// Network version to support temporary address structure on wallet
-// TODO: Deprecate after addresses retire
-pub const NETWORK_VERSION_TEMP: u64 = 99999;
 
 /*------- VALUE HANDLING CONSTANTS --------*/
 // Number of decimal places to divide to in display
@@ -229,8 +223,6 @@ pub const OPWITHIN_DESC: &str = "Substitutes the three numbers on top of the the
 // crypto
 pub const OPSHA3: &str = "OP_SHA3";
 pub const OPHASH256: &str = "OP_HASH256";
-pub const OPHASH256V0: &str = "OP_HASH256_V0";
-pub const OPHASH256TEMP: &str = "OP_HASH256_TEMP";
 pub const OPCHECKSIG: &str = "OP_CHECKSIG";
 pub const OPCHECKSIGVERIFY: &str = "OP_CHECKSIGVERIFY";
 pub const OPCHECKMULTISIG: &str = "OP_CHECKMULTISIG";
@@ -239,10 +231,6 @@ pub const OPCHECKMULTISIGVERIFY: &str = "OP_CHECKMULTISIGVERIFY";
 pub const OPSHA3_DESC: &str = "Hashes the top item on the stack using SHA3-256";
 pub const OPHASH256_DESC: &str =
     "Creates standard address from public key and pushes it onto the stack";
-pub const OPHASH256V0_DESC: &str =
-    "Creates v0 address from public key and pushes it onto the stack";
-pub const OPHASH256TEMP_DESC: &str =
-    "Creates temporary address from public key and pushes it onto the stack";
 pub const OPCHECKSIG_DESC: &str =
     "Pushes ONE onto the stack if the signature is valid, ZERO otherwise";
 pub const OPCHECKSIGVERIFY_DESC: &str = "Runs OP_CHECKSIG and OP_VERIFY in sequence";

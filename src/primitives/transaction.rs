@@ -35,7 +35,6 @@ pub struct TxConstructor {
     pub previous_out: OutPoint,
     pub signatures: Vec<Signature>,
     pub pub_keys: Vec<PublicKey>,
-    pub address_version: Option<u64>,
 }
 
 /// An outpoint - a combination of a transaction hash and an index n into its vout
