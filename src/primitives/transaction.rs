@@ -8,10 +8,9 @@ use crate::primitives::{
 use crate::script::lang::Script;
 use crate::script::{OpCodes, StackEntry};
 use crate::utils::is_valid_amount;
-use bincode::serialize;
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use crate::primitives::address::AnyAddress;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GenesisTxHashSpec {
@@ -35,7 +34,6 @@ pub struct TxConstructor {
     pub previous_out: OutPoint,
     pub signatures: Vec<Signature>,
     pub pub_keys: Vec<PublicKey>,
-    pub address_version: Option<u64>,
 }
 
 /// An outpoint - a combination of a transaction hash and an index n into its vout
@@ -120,21 +118,16 @@ impl TxIn {
 /// An output of a transaction. It contains the public key that the next input
 /// must be able to sign with to claim it. It also contains the block hash for the
 /// potential DRS if this is a data asset transaction
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TxOut {
     pub value: Asset,
     pub locktime: u64,
-    pub script_public_key: Option<String>,
+    pub script_public_key: AnyAddress,
 }
 
 impl TxOut {
-    /// Creates a new TxOut instance
-    pub fn new() -> TxOut {
-        Default::default()
-    }
-
     pub fn new_token_amount(
-        to_address: String,
+        to_address: AnyAddress,
         amount: TokenAmount,
         locktime: Option<u64>,
     ) -> TxOut {
@@ -146,38 +139,36 @@ impl TxOut {
         TxOut {
             value,
             locktime: locktime.unwrap_or(ZERO as u64),
-            script_public_key: Some(to_address),
+            script_public_key: to_address,
         }
     }
 
     /// Creates a new TxOut instance for a `Item` asset
     ///
     /// **NOTE:** Only create transactions may have `Item` assets that have a `None` `genesis_hash`
-    pub fn new_item_amount(to_address: String, item: ItemAsset, locktime: Option<u64>) -> TxOut {
+    pub fn new_item_amount(
+        to_address: AnyAddress,
+        item: ItemAsset,
+        locktime: Option<u64>,
+    ) -> TxOut {
         TxOut {
             value: Asset::Item(item),
             locktime: locktime.unwrap_or(ZERO as u64),
-            script_public_key: Some(to_address),
+            script_public_key: to_address,
         }
     }
 
     //TODO: Add handling for `Data' asset variant
-    pub fn new_asset(to_address: String, asset: Asset, locktime: Option<u64>) -> TxOut {
+    pub fn new_asset(
+        to_address: AnyAddress,
+        asset: Asset,
+        locktime: Option<u64>,
+    ) -> TxOut {
         match asset {
             Asset::Token(amount) => TxOut::new_token_amount(to_address, amount, locktime),
             Asset::Item(item) => TxOut::new_item_amount(to_address, item, locktime),
             _ => panic!("Cannot create TxOut for asset of type {:?}", asset),
         }
-    }
-
-    /// Returns whether current tx_out is a P2SH
-    pub fn is_p2sh_tx_out(&self) -> bool {
-        if let Some(pk) = &self.script_public_key {
-            let pk_bytes = pk.as_bytes();
-            return pk_bytes[0] == P2SH_PREPEND;
-        }
-
-        false
     }
 }
 
@@ -210,15 +201,6 @@ impl Transaction {
         }
     }
 
-    /// Get the total transaction size in bytes
-    pub fn get_total_size(&self) -> usize {
-        let bytes = match serialize(self) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
-        bytes.len()
-    }
-
     /// Gets the create asset assigned to this transaction, if it exists
     fn get_create_asset(&self) -> Option<&Asset> {
         let is_create = self.inputs.len() == 1
@@ -241,31 +223,18 @@ impl Transaction {
             .map(|a| !a.is_token())
             .unwrap_or_default()
     }
-
-    /// Returns whether current transaction is a P2SH tx
-    pub fn is_p2sh_tx(&self) -> bool {
-        if self.outputs.len() != 1 {
-            return false;
-        }
-
-        if let Some(pk) = &self.outputs[0].script_public_key {
-            let pk_bytes = pk.as_bytes();
-            return pk_bytes[0] == P2SH_PREPEND;
-        }
-
-        false
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::primitives::asset::{Asset, TokenAmount};
     use crate::primitives::transaction::TxOut;
+    use crate::utils::Placeholder;
 
     #[test]
     fn test_overflow_tx_out() {
         let amount = TokenAmount(u64::MAX);
-        let tx_out = TxOut::new_token_amount("test".to_string(), amount, None);
+        let tx_out = TxOut::new_token_amount(Placeholder::placeholder(), amount, None);
 
         assert_eq!(tx_out.value, Asset::Token(TokenAmount::default()));
     }

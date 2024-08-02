@@ -5,8 +5,9 @@ use crate::primitives::{
     transaction::{OutPoint, Transaction, TxIn, TxOut},
 };
 use crate::script::lang::Script;
-use crate::utils::transaction_utils::{construct_address, construct_tx_in_out_signable_hash};
+use crate::utils::transaction_utils::construct_tx_in_out_signable_hash;
 use std::collections::BTreeMap;
+use crate::primitives::address::P2PKHAddress;
 
 /// Generate a transaction with valid Script values
 /// and accompanying UTXO set for testing a set of
@@ -30,7 +31,7 @@ pub fn generate_tx_with_ins_and_outs_assets(
     output_assets: &[(u64, Option<&str>)],                /* Input amount, genesis_hash */
 ) -> (BTreeMap<OutPoint, TxOut>, Transaction) {
     let (pk, sk) = sign::gen_keypair();
-    let spk = construct_address(&pk);
+    let spk = P2PKHAddress::from_pubkey(&pk).wrap();
     let mut tx = Transaction::new();
     let mut utxo_set: BTreeMap<OutPoint, TxOut> = BTreeMap::new();
 
@@ -39,9 +40,9 @@ pub fn generate_tx_with_ins_and_outs_assets(
         let tx_out = match genesis_hash {
             Some(drs) => {
                 let item = Asset::item(*output_amount, Some(drs.to_string()), None);
-                TxOut::new_asset(spk.clone(), item, None)
+                TxOut::new_asset(spk, item, None)
             }
-            None => TxOut::new_token_amount(spk.clone(), TokenAmount(*output_amount), None),
+            None => TxOut::new_token_amount(spk, TokenAmount(*output_amount), None),
         };
         tx.outputs.push(tx_out);
     }
@@ -52,9 +53,9 @@ pub fn generate_tx_with_ins_and_outs_assets(
         let tx_in_previous_out = match genesis_hash {
             Some(drs) => {
                 let item = Asset::item(*input_amount, Some(drs.to_string()), md.clone());
-                TxOut::new_asset(spk.clone(), item, None)
+                TxOut::new_asset(spk, item, None)
             }
-            None => TxOut::new_token_amount(spk.clone(), TokenAmount(*input_amount), None),
+            None => TxOut::new_token_amount(spk, TokenAmount(*input_amount), None),
         };
         let signable_hash = construct_tx_in_out_signable_hash(
             &TxIn {
@@ -66,7 +67,7 @@ pub fn generate_tx_with_ins_and_outs_assets(
         let signature = sign::sign_detached(signable_hash.as_bytes(), &sk);
         let tx_in = TxIn::new_from_input(
             tx_previous_out.clone(),
-            Script::pay2pkh(signable_hash, signature, pk, None),
+            Script::pay2pkh(hex::decode(&signable_hash).unwrap(), signature, pk),
         );
         utxo_set.insert(tx_previous_out, tx_in_previous_out);
         tx.inputs.push(tx_in);

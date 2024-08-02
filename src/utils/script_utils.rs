@@ -12,16 +12,15 @@ use crate::script::lang::{ConditionStack, Script, Stack};
 use crate::script::{OpCodes, StackEntry};
 use crate::utils::{error_utils::*, is_valid_amount};
 use crate::utils::transaction_utils::{
-    construct_address, construct_tx_hash, construct_tx_in_out_signable_hash,
+    construct_tx_hash, construct_tx_in_out_signable_hash,
     construct_tx_in_signable_asset_hash, construct_tx_in_signable_hash,
 };
-use bincode::serialize;
-use bytes::Bytes;
 use hex::encode;
 use ring::error;
 use std::collections::{BTreeMap, BTreeSet};
 use std::thread::current;
 use tracing::{debug, error, info, trace};
+use crate::primitives::address::{AnyAddress, P2PKHAddress};
 
 use super::transaction_utils::construct_p2sh_address;
 
@@ -100,22 +99,21 @@ pub fn tx_is_valid<'a>(
         }
 
         // At this point `TxIn` will be valid
-        let tx_out_pk = tx_out.script_public_key.as_ref();
+        let tx_out_pk = &tx_out.script_public_key;
         let tx_out_hash = construct_tx_in_signable_hash(tx_out_point);
         let full_tx_hash = construct_tx_in_out_signable_hash(tx_in, &tx.outputs);
 
         debug!("full_tx_hash: {:?}", full_tx_hash);
 
-        if let Some(pk) = tx_out_pk {
-            // Check will need to include other signature types here
-            if !tx_has_valid_p2pkh_sig(&tx_in.script_signature, &full_tx_hash, pk)
-                && !tx_has_valid_p2sh_script(&tx_in.script_signature, pk)
-            {
-                error!("INVALID SIGNATURE OR SCRIPT TYPE");
-                return (false, "Invalid signature or script structure".to_string());
-            }
-        } else {
-            return (false, "Previous outpoint has no public key".to_string());
+        match (tx_out_pk) {
+            AnyAddress::P2PKH(address) =>
+                if !tx_has_valid_p2pkh_sig(&tx_in.script_signature, &full_tx_hash, address)
+                    // TODO: jrabil: P2SH    && !tx_has_valid_p2sh_script(&tx_in.script_signature, pk)
+                {
+                    error!("INVALID SIGNATURE OR SCRIPT TYPE");
+                    return (false, "Invalid signature".to_string());
+                }
+            _ => return (false, format!("Previous outpoint has invalid public key: {:?}", tx_out_pk)),
         }
 
         let asset = tx_out.value.clone().with_fixed_hash(tx_out_point);
@@ -147,27 +145,11 @@ pub fn tx_outs_are_valid(
     let mut tx_outs_spent: AssetValues = Default::default();
 
     for tx_out in tx_outs {
-        // Addresses must have valid length
-        if let Some(addr) = &tx_out.script_public_key {
-            if !address_has_valid_length(addr) {
-                trace!("Address has invalid length");
-                return (false, "Address in output has invalid length".to_string());
-            }
-        }
-
         tx_outs_spent.update_add(&tx_out.value);
     }
 
     // Check fees as well
     for fee in fees {
-        // Addresses must have valid length
-        if let Some(addr) = &fee.script_public_key {
-            if !address_has_valid_length(addr) {
-                trace!("Address has invalid length");
-                return (false, "Address in fee has invalid length".to_string());
-            }
-        }
-
         tx_outs_spent.update_add(&fee.value);
     }
 
@@ -217,7 +199,11 @@ pub fn tx_has_valid_create_script(script: &Script, asset: &Asset) -> bool {
         it.next(),
         it.next(),
     ) {
-        if b == &asset_hash && script.interpret() {
+        // For legacy reasons, the hashed data is the hex representation of the data rather than
+        // the data itself.
+        let b_hex = hex::encode(b);
+
+        if b_hex == asset_hash && script.interpret() {
             return true;
         }
     }
@@ -233,7 +219,12 @@ pub fn tx_has_valid_create_script(script: &Script, asset: &Asset) -> bool {
 /// * `script`          - Script to validate
 /// * `outpoint_hash`   - Hash of the corresponding outpoint
 /// * `tx_out_pub_key`  - Public key of the previous tx_out
-fn tx_has_valid_p2pkh_sig(script: &Script, outpoint_hash: &str, tx_out_pub_key: &str) -> bool {
+// TODO: The last two operands should be converted to the corresponding types
+fn tx_has_valid_p2pkh_sig(
+    script: &Script,
+    outpoint_hash: &str,
+    tx_out_pub_key: &P2PKHAddress,
+) -> bool {
     let mut it = script.stack.iter();
 
     debug!("script: {:?}", script.stack);
@@ -243,9 +234,7 @@ fn tx_has_valid_p2pkh_sig(script: &Script, outpoint_hash: &str, tx_out_pub_key: 
         Some(StackEntry::Signature(_)),
         Some(StackEntry::PubKey(_)),
         Some(StackEntry::Op(OpCodes::OP_DUP)),
-        Some(StackEntry::Op(
-            OpCodes::OP_HASH256 | OpCodes::OP_HASH256_V0 | OpCodes::OP_HASH256_TEMP,
-        )),
+        Some(StackEntry::Op(OpCodes::OP_HASH256)),
         Some(StackEntry::Bytes(h)),
         Some(StackEntry::Op(OpCodes::OP_EQUALVERIFY)),
         Some(StackEntry::Op(OpCodes::OP_CHECKSIG)),
@@ -262,7 +251,13 @@ fn tx_has_valid_p2pkh_sig(script: &Script, outpoint_hash: &str, tx_out_pub_key: 
         it.next(),
     ) {
         debug!("b: {:?}, h: {:?}", b, h);
-        if h == tx_out_pub_key && b == outpoint_hash && script.interpret() {
+
+        // For legacy reasons, the hashed data is the hex representation of the data rather than
+        // the data itself.
+        let h_hex = hex::encode(h);
+        let b_hex = hex::encode(b);
+
+        if h_hex == hex::encode(&tx_out_pub_key.get_hash()) && b_hex == outpoint_hash && script.interpret() {
             return true;
         }
     }
@@ -282,8 +277,9 @@ fn tx_has_valid_p2pkh_sig(script: &Script, outpoint_hash: &str, tx_out_pub_key: 
 ///
 /// * `script`          - Script to validate
 /// * `address`         - Address of the P2SH transaction
+#[allow(unused_variables)]
 pub fn tx_has_valid_p2sh_script(script: &Script, address: &str) -> bool {
-    let p2sh_address = construct_p2sh_address(script);
+    /*let p2sh_address = construct_p2sh_address(script);
 
     if p2sh_address == address {
         return script.interpret();
@@ -295,7 +291,8 @@ pub fn tx_has_valid_p2sh_script(script: &Script, address: &str) -> bool {
         address
     );
 
-    false
+    false*/
+    todo!("P2SH not yet supported!")
 }
 
 /// Checks that a item's metadata conforms to the network size constraint
@@ -325,9 +322,11 @@ mod tests {
 
     use super::*;
     use crate::constants::ITEM_ACCEPT_VAL;
+    use crate::primitives::address::P2PKHAddress;
     use crate::primitives::asset::Asset;
     use crate::primitives::druid::DdeValues;
     use crate::primitives::transaction::OutPoint;
+    use crate::utils::Placeholder;
     use crate::utils::test_utils::generate_tx_with_ins_and_outs_assets;
     use crate::utils::transaction_utils::*;
 
@@ -383,7 +382,7 @@ mod tests {
         assert_eq!(cond_stack.first_false_pos, Some(0));
         /// error item type
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(String::new()));
+        stack.push(StackEntry::Bytes(Vec::new()));
         let mut cond_stack = ConditionStack::new();
         let b = op_if(&mut stack, &mut cond_stack);
         assert!(!b);
@@ -428,7 +427,7 @@ mod tests {
         assert_eq!(cond_stack.first_false_pos, Some(0));
         /// error item type
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(String::new()));
+        stack.push(StackEntry::Bytes(Vec::new()));
         let mut cond_stack = ConditionStack::new();
         let b = op_notif(&mut stack, &mut cond_stack);
         assert!(!b);
@@ -871,7 +870,7 @@ mod tests {
         /// op_pick([1,"hello"]) -> fail
         let mut stack = Stack::new();
         stack.push(StackEntry::Num(1));
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         let b = op_pick(&mut stack);
         assert!(!b);
         /// op_pick([1,1]) -> fail
@@ -919,7 +918,7 @@ mod tests {
         /// op_roll([1,"hello"]) -> fail
         let mut stack = Stack::new();
         stack.push(StackEntry::Num(1));
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         let b = op_roll(&mut stack);
         assert!(!b);
         /// op_roll([1,1]) -> fail
@@ -1001,36 +1000,36 @@ mod tests {
     fn test_cat() {
         /// op_cat(["hello","world"]) -> ["helloworld"]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
-        stack.push(StackEntry::Bytes("world".to_string()));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("helloworld".to_string())];
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
+        stack.push(StackEntry::Bytes("world".as_bytes().to_vec()));
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("helloworld".as_bytes().to_vec())];
         op_cat(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_cat(["hello",""]) -> ["hello"]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
-        stack.push(StackEntry::Bytes("".to_string()));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("hello".to_string())];
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
+        stack.push(StackEntry::Bytes("".as_bytes().to_vec()));
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("hello".as_bytes().to_vec())];
         op_cat(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_cat(["a","a"*MAX_SCRIPT_ITEM_SIZE]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("a".to_string()));
+        stack.push(StackEntry::Bytes("a".as_bytes().to_vec()));
         let mut s = String::new();
         for i in 1..=MAX_SCRIPT_ITEM_SIZE {
             s.push('a');
         }
-        stack.push(StackEntry::Bytes(s.to_string()));
+        stack.push(StackEntry::Bytes(s.as_bytes().to_vec()));
         let b = op_cat(&mut stack);
         assert!(!b);
         /// op_cat(["hello"]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         let b = op_cat(&mut stack);
         assert!(!b);
         /// op_cat(["hello", 1]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(1));
         let b = op_cat(&mut stack);
         assert!(!b)
@@ -1041,62 +1040,62 @@ mod tests {
     fn test_substr() {
         /// op_substr(["hello",1,2]) -> ["el"]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         for i in 1..=2 {
             stack.push(StackEntry::Num(i));
         }
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("el".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("el".as_bytes().to_vec())];
         op_substr(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_substr(["hello",0,0]) -> [""]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         for i in 1..=2 {
             stack.push(StackEntry::Num(0));
         }
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("".as_bytes().to_vec())];
         op_substr(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_substr(["hello",0,5]) -> ["hello"]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(0));
         stack.push(StackEntry::Num(5));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("hello".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("hello".as_bytes().to_vec())];
         op_substr(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_substr(["hello",5,0]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(5));
         stack.push(StackEntry::Num(0));
         let b = op_substr(&mut stack);
         assert!(!b);
         /// op_substr(["hello",1,5]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(1));
         stack.push(StackEntry::Num(5));
         let b = op_substr(&mut stack);
         assert!(!b);
         /// op_substr(["hello",1]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(1));
         let b = op_substr(&mut stack);
         assert!(!b);
         /// op_substr(["hello",1,usize::MAX]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(1));
         stack.push(StackEntry::Num(usize::MAX));
         let b = op_substr(&mut stack);
         assert!(!b);
         /// op_substr(["hello",1,""]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(1));
-        stack.push(StackEntry::Bytes("".to_string()));
+        stack.push(StackEntry::Bytes("".as_bytes().to_vec()));
         let b = op_substr(&mut stack);
         assert!(!b)
     }
@@ -1106,34 +1105,34 @@ mod tests {
     fn test_left() {
         /// op_left(["hello",2]) -> ["he"]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(2));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("he".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("he".as_bytes().to_vec())];
         op_left(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_left(["hello",0]) -> [""]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(0));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("".as_bytes().to_vec())];
         op_left(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_left(["hello",5]) -> ["hello"]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(5));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("hello".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("hello".as_bytes().to_vec())];
         op_left(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_left(["hello",""]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
-        stack.push(StackEntry::Bytes("".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
+        stack.push(StackEntry::Bytes("".as_bytes().to_vec()));
         let b = op_left(&mut stack);
         assert!(!b);
         /// op_left(["hello"]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         let b = op_left(&mut stack);
         assert!(!b)
     }
@@ -1143,34 +1142,34 @@ mod tests {
     fn test_right() {
         /// op_right(["hello",0]) -> ["hello"]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(0));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("hello".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("hello".as_bytes().to_vec())];
         op_right(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_right(["hello",2]) -> ["llo"]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(2));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("llo".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("llo".as_bytes().to_vec())];
         op_right(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_right(["hello",5]) -> [""]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         stack.push(StackEntry::Num(5));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("".to_string())];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("".as_bytes().to_vec())];
         op_right(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_right(["hello",""]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
-        stack.push(StackEntry::Bytes("".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
+        stack.push(StackEntry::Bytes("".as_bytes().to_vec()));
         let b = op_right(&mut stack);
         assert!(!b);
         /// op_right(["hello"]) -> fail
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         let b = op_right(&mut stack);
         assert!(!b)
     }
@@ -1180,15 +1179,15 @@ mod tests {
     fn test_size() {
         /// op_size(["hello"]) -> ["hello",5]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("hello".to_string()));
+        stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         let mut v: Vec<StackEntry> =
-            vec![StackEntry::Bytes("hello".to_string()), StackEntry::Num(5)];
+            vec![StackEntry::Bytes("hello".as_bytes().to_vec()), StackEntry::Num(5)];
         op_size(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_size([""]) -> ["",0]
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes("".to_string()));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("".to_string()), StackEntry::Num(0)];
+        stack.push(StackEntry::Bytes("".as_bytes().to_vec()));
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes("".as_bytes().to_vec()), StackEntry::Num(0)];
         op_size(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_size([1]) -> fail
@@ -1287,7 +1286,7 @@ mod tests {
         /// op_equal(["hello","hello"]) -> [1]
         let mut stack = Stack::new();
         for i in 1..=2 {
-            stack.push(StackEntry::Bytes("hello".to_string()));
+            stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         }
         let mut v: Vec<StackEntry> = vec![StackEntry::Num(1)];
         op_equal(&mut stack);
@@ -1313,7 +1312,7 @@ mod tests {
         /// op_equalverify(["hello","hello"]) -> []
         let mut stack = Stack::new();
         for i in 1..=2 {
-            stack.push(StackEntry::Bytes("hello".to_string()));
+            stack.push(StackEntry::Bytes("hello".as_bytes().to_vec()));
         }
         let mut v: Vec<StackEntry> = vec![];
         op_equalverify(&mut stack);
@@ -1922,22 +1921,22 @@ mod tests {
         let (pk, sk) = sign::gen_keypair();
         let msg = hex::encode(vec![0, 0, 0]);
         let sig = sign::sign_detached(msg.as_bytes(), &sk);
-        let h = hex::encode(sha3_256::digest(sig.as_ref()));
+        let h = sha3_256::digest(sig.as_ref()).to_vec();
         let mut stack = Stack::new();
         stack.push(StackEntry::Signature(sig));
         let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(h)];
         op_sha3(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_sha3([pk]) -> [sha3_256(pk)]
-        let h = hex::encode(sha3_256::digest(pk.as_ref()));
+        let h = sha3_256::digest(pk.as_ref()).to_vec();
         let mut stack = Stack::new();
         stack.push(StackEntry::PubKey(pk));
         let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(h)];
         op_sha3(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_sha3(["hello"]) -> [sha3_256("hello")]
-        let s = "hello".to_string();
-        let h = hex::encode(sha3_256::digest(s.as_bytes()));
+        let s = "hello".as_bytes().to_vec();
+        let h = sha3_256::digest(hex::encode(&s).as_bytes()).to_vec();
         let mut stack = Stack::new();
         stack.push(StackEntry::Bytes(s));
         let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(h)];
@@ -1961,44 +1960,12 @@ mod tests {
         let (pk, sk) = sign::gen_keypair();
         let mut stack = Stack::new();
         stack.push(StackEntry::PubKey(pk));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(construct_address(&pk))];
+        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(P2PKHAddress::from_pubkey(&pk).get_hash().to_vec())];
         op_hash256(&mut stack);
         assert_eq!(stack.main_stack, v);
         /// op_hash256([]) -> fail
         let mut stack = Stack::new();
         let b = op_hash256(&mut stack);
-        assert!(!b)
-    }
-
-    #[test]
-    /// Test OP_HASH256_V0
-    fn test_hash256_v0() {
-        /// op_hash256_v0([pk]) -> [addr_v0]
-        let (pk, sk) = sign::gen_keypair();
-        let mut stack = Stack::new();
-        stack.push(StackEntry::PubKey(pk));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(construct_address_v0(&pk))];
-        op_hash256_v0(&mut stack);
-        assert_eq!(stack.main_stack, v);
-        /// op_hash256([]) -> fail
-        let mut stack = Stack::new();
-        let b = op_hash256_v0(&mut stack);
-        assert!(!b)
-    }
-
-    #[test]
-    /// Test OP_HASH256_TEMP
-    fn test_hash256_temp() {
-        /// op_hash256_temp([pk]) -> [addr_temp]
-        let (pk, sk) = sign::gen_keypair();
-        let mut stack = Stack::new();
-        stack.push(StackEntry::PubKey(pk));
-        let mut v: Vec<StackEntry> = vec![StackEntry::Bytes(construct_address_temp(&pk))];
-        op_hash256_temp(&mut stack);
-        assert_eq!(stack.main_stack, v);
-        /// op_hash256([]) -> fail
-        let mut stack = Stack::new();
-        let b = op_hash256_temp(&mut stack);
         assert!(!b)
     }
 
@@ -2010,7 +1977,7 @@ mod tests {
         let msg = hex::encode(vec![0, 0, 0]);
         let sig = sign::sign_detached(msg.as_bytes(), &sk);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig));
         stack.push(StackEntry::PubKey(pk));
         let mut v: Vec<StackEntry> = vec![StackEntry::Num(1)];
@@ -2020,7 +1987,7 @@ mod tests {
         /// op_checksig([msg',sig,pk]) -> [0]
         let msg = hex::encode(vec![0, 0, 1]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig));
         stack.push(StackEntry::PubKey(pk));
         let mut v: Vec<StackEntry> = vec![StackEntry::Num(0)];
@@ -2031,7 +1998,7 @@ mod tests {
         let (pk, sk) = sign::gen_keypair();
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig));
         stack.push(StackEntry::PubKey(pk));
         let mut v: Vec<StackEntry> = vec![StackEntry::Num(0)];
@@ -2054,7 +2021,7 @@ mod tests {
         let msg = hex::encode(vec![0, 0, 0]);
         let sig = sign::sign_detached(msg.as_bytes(), &sk);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig));
         stack.push(StackEntry::PubKey(pk));
         let mut v: Vec<StackEntry> = vec![];
@@ -2064,7 +2031,7 @@ mod tests {
         /// op_checksigverify([msg',sig,pk]) -> fail
         let msg = hex::encode(vec![0, 0, 1]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig));
         stack.push(StackEntry::PubKey(pk));
         let b = op_checksigverify(&mut stack);
@@ -2074,7 +2041,7 @@ mod tests {
         let (pk, sk) = sign::gen_keypair();
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig));
         stack.push(StackEntry::PubKey(pk));
         let b = op_checksigverify(&mut stack);
@@ -2100,7 +2067,7 @@ mod tests {
         let sig1 = sign::sign_detached(msg.as_bytes(), &sk1);
         let sig2 = sign::sign_detached(msg.as_bytes(), &sk2);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Signature(sig2));
         stack.push(StackEntry::Num(2));
@@ -2115,7 +2082,7 @@ mod tests {
         /// op_checkmultisig([msg,0,pk1,pk2,pk3,3]) -> [1]
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Num(0));
         stack.push(StackEntry::PubKey(pk1));
         stack.push(StackEntry::PubKey(pk2));
@@ -2128,7 +2095,7 @@ mod tests {
         /// op_checkmultisig([msg,0,0]) -> [1]
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Num(0));
         stack.push(StackEntry::Num(0));
         let mut v: Vec<StackEntry> = vec![StackEntry::Num(1)];
@@ -2138,7 +2105,7 @@ mod tests {
         /// op_checkmultisig([msg,sig1,1,pk1,1]) -> [1]
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Num(1));
         stack.push(StackEntry::PubKey(pk1));
@@ -2151,7 +2118,7 @@ mod tests {
         let msg = hex::encode(vec![0, 0, 0]);
         let sig3 = sign::sign_detached(msg.as_bytes(), &sk3);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig3));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Num(2));
@@ -2166,7 +2133,7 @@ mod tests {
         /// op_checkmultisig([msg',sig1,sig2,2,pk1,pk2,pk3,3]) -> [0]
         let msg = hex::encode(vec![0, 0, 1]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Signature(sig2));
         stack.push(StackEntry::Num(2));
@@ -2181,7 +2148,7 @@ mod tests {
         /// op_checkmultisig([msg,sig1,sig1,2,pk1,pk2,pk3,3]) -> [0]
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Num(2));
@@ -2253,7 +2220,7 @@ mod tests {
         let sig1 = sign::sign_detached(msg.as_bytes(), &sk1);
         let sig2 = sign::sign_detached(msg.as_bytes(), &sk2);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Signature(sig2));
         stack.push(StackEntry::Num(2));
@@ -2268,7 +2235,7 @@ mod tests {
         /// op_checkmultisigverify([msg,0,pk1,pk2,pk3,3]) -> []
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Num(0));
         stack.push(StackEntry::PubKey(pk1));
         stack.push(StackEntry::PubKey(pk2));
@@ -2281,7 +2248,7 @@ mod tests {
         /// op_checkmultisig([msg,0,0]) -> []
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Num(0));
         stack.push(StackEntry::Num(0));
         let mut v: Vec<StackEntry> = vec![];
@@ -2291,7 +2258,7 @@ mod tests {
         /// op_checkmultisigverify([msg,sig1,1,pk1,1]) -> []
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Num(1));
         stack.push(StackEntry::PubKey(pk1));
@@ -2304,7 +2271,7 @@ mod tests {
         let msg = hex::encode(vec![0, 0, 0]);
         let sig3 = sign::sign_detached(msg.as_bytes(), &sk3);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig3));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Num(2));
@@ -2319,7 +2286,7 @@ mod tests {
         /// op_checkmultisigverify([msg',sig1,sig2,2,pk1,pk2,pk3,3]) -> fail
         let msg = hex::encode(vec![0, 0, 1]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Signature(sig2));
         stack.push(StackEntry::Num(2));
@@ -2333,7 +2300,7 @@ mod tests {
         /// op_checkmultisigverify([msg,sig1,sig1,2,pk1,pk2,pk3,3]) -> fail
         let msg = hex::encode(vec![0, 0, 0]);
         let mut stack = Stack::new();
-        stack.push(StackEntry::Bytes(msg));
+        stack.push(StackEntry::Bytes(hex::decode(msg).unwrap()));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Signature(sig1));
         stack.push(StackEntry::Num(2));
@@ -2399,11 +2366,11 @@ mod tests {
         let script = Script::from(v);
         assert!(script.is_valid());
         // script length <= 10000 bytes
-        let v = vec![StackEntry::Bytes("a".repeat(500)); 20];
+        let v = vec![StackEntry::Bytes("a".repeat(500).as_bytes().to_vec()); 20];
         let script = Script::from(v);
         assert!(script.is_valid());
         // script length > 10000 bytes
-        let v = vec![StackEntry::Bytes("a".repeat(500)); 21];
+        let v = vec![StackEntry::Bytes("a".repeat(500).as_bytes().to_vec()); 21];
         let script = Script::from(v);
         assert!(!script.is_valid());
         // # opcodes <= 201
@@ -2457,11 +2424,11 @@ mod tests {
         let script = Script::from(v);
         assert!(script.interpret());
         // script length <= 10000 bytes
-        let v = vec![StackEntry::Bytes("a".repeat(500)); 20];
+        let v = vec![StackEntry::Bytes("a".repeat(500).as_bytes().to_vec()); 20];
         let script = Script::from(v);
         assert!(script.interpret());
         // script length > 10000 bytes
-        let v = vec![StackEntry::Bytes("a".repeat(500)); 21];
+        let v = vec![StackEntry::Bytes("a".repeat(500).as_bytes().to_vec()); 21];
         let script = Script::from(v);
         assert!(!script.interpret());
         // # opcodes <= 201
@@ -2666,7 +2633,7 @@ mod tests {
             new_tx_in.script_signature = Script::multisig_validation(
                 m,
                 entry.pub_keys.len(),
-                entry.previous_out.t_hash.clone(),
+                hex::decode(&entry.previous_out.t_hash).unwrap(),
                 entry.signatures,
                 entry.pub_keys,
             );
@@ -2685,7 +2652,7 @@ mod tests {
         for entry in tx_values {
             let mut new_tx_in = TxIn::new();
             new_tx_in.script_signature = Script::member_multisig(
-                entry.previous_out.t_hash.clone(),
+                hex::decode(&entry.previous_out.t_hash).unwrap(),
                 entry.pub_keys[0],
                 entry.signatures[0],
             );
@@ -2725,8 +2692,7 @@ mod tests {
     #[test]
     /// Checks whether addresses are validated correctly
     fn test_validate_addresses_correctly() {
-        let (pk, _) = sign::gen_keypair();
-        let address = construct_address(&pk);
+        let address = P2PKHAddress::placeholder().to_string();
 
         assert!(address_has_valid_length(&address));
         assert!(address_has_valid_length(&hex::encode([0; 32])));
@@ -2736,22 +2702,6 @@ mod tests {
     #[test]
     /// Checks that correct member multisig scripts are validated as such
     fn test_pass_member_multisig_valid() {
-        test_pass_member_multisig_valid_common(None);
-    }
-
-    #[test]
-    /// Checks that correct member multisig scripts are validated as such
-    fn test_pass_member_multisig_valid_v0() {
-        test_pass_member_multisig_valid_common(Some(NETWORK_VERSION_V0));
-    }
-
-    #[test]
-    /// Checks that correct member multisig scripts are validated as such
-    fn test_pass_member_multisig_valid_temp() {
-        test_pass_member_multisig_valid_common(Some(NETWORK_VERSION_TEMP));
-    }
-
-    fn test_pass_member_multisig_valid_common(address_version: Option<u64>) {
         let (pk, sk) = sign::gen_keypair();
         let t_hash = hex::encode(vec![0, 0, 0]);
         let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
@@ -2760,7 +2710,6 @@ mod tests {
             previous_out: OutPoint::new(t_hash, 0),
             signatures: vec![signature],
             pub_keys: vec![pk],
-            address_version,
         };
 
         let tx_ins = create_multisig_member_tx_ins(vec![tx_const]);
@@ -2771,22 +2720,6 @@ mod tests {
     #[test]
     /// Checks that incorrect member multisig scripts are validated as such
     fn test_fail_member_multisig_invalid() {
-        test_fail_member_multisig_invalid_common(None);
-    }
-
-    #[test]
-    /// Checks that incorrect member multisig scripts are validated as such
-    fn test_fail_member_multisig_invalid_v0() {
-        test_fail_member_multisig_invalid_common(Some(NETWORK_VERSION_V0));
-    }
-
-    #[test]
-    /// Checks that incorrect member multisig scripts are validated as such
-    fn test_fail_member_multisig_invalid_temp() {
-        test_fail_member_multisig_invalid_common(Some(NETWORK_VERSION_TEMP));
-    }
-
-    fn test_fail_member_multisig_invalid_common(address_version: Option<u64>) {
         let (_pk, sk) = sign::gen_keypair();
         let (pk, _sk) = sign::gen_keypair();
         let t_hash = hex::encode(vec![0, 0, 0]);
@@ -2796,7 +2729,6 @@ mod tests {
             previous_out: OutPoint::new(t_hash, 0),
             signatures: vec![signature],
             pub_keys: vec![pk],
-            address_version,
         };
 
         let tx_ins = create_multisig_member_tx_ins(vec![tx_const]);
@@ -2807,10 +2739,6 @@ mod tests {
     #[test]
     /// Checks that correct p2pkh transaction signatures are validated as such
     fn test_pass_p2pkh_sig_valid() {
-        test_pass_p2pkh_sig_valid_common(None);
-    }
-
-    fn test_pass_p2pkh_sig_valid_common(address_version: Option<u64>) {
         let (pk, sk) = sign::gen_keypair();
         let outpoint = OutPoint {
             t_hash: hex::encode(vec![0, 0, 0]),
@@ -2823,7 +2751,6 @@ mod tests {
             previous_out: outpoint,
             signatures: vec![],
             pub_keys: vec![pk],
-            address_version,
         };
 
         let tx_outs = vec![];
@@ -2831,7 +2758,7 @@ mod tests {
         tx_ins = update_input_signatures(&tx_ins, &tx_outs, &key_material);
 
         let hash_to_sign = construct_tx_in_out_signable_hash(&tx_ins[0], &tx_outs);
-        let tx_out_pk = construct_address_for(&pk, address_version);
+        let tx_out_pk = P2PKHAddress::from_pubkey(&pk);
 
         assert!(tx_has_valid_p2pkh_sig(
             &tx_ins[0].script_signature,
@@ -2843,16 +2770,6 @@ mod tests {
     #[test]
     /// Checks that invalid p2pkh transaction signatures are validated as such
     fn test_fail_p2pkh_sig_invalid() {
-        test_fail_p2pkh_sig_invalid_common(None);
-    }
-
-    #[test]
-    /// Checks that invalid p2pkh transaction signatures are validated as such
-    fn test_fail_p2pkh_sig_invalid_v0() {
-        test_fail_p2pkh_sig_invalid_common(Some(NETWORK_VERSION_V0));
-    }
-
-    fn test_fail_p2pkh_sig_invalid_common(address_version: Option<u64>) {
         let (pk, sk) = sign::gen_keypair();
         let (second_pk, _s) = sign::gen_keypair();
         let outpoint = OutPoint {
@@ -2867,11 +2784,10 @@ mod tests {
             previous_out: outpoint,
             signatures: vec![signature],
             pub_keys: vec![second_pk],
-            address_version,
         };
 
         let tx_ins = construct_payment_tx_ins(vec![tx_const]);
-        let tx_out_pk = construct_address(&pk);
+        let tx_out_pk = P2PKHAddress::from_pubkey(&pk);
 
         assert!(!tx_has_valid_p2pkh_sig(
             &tx_ins[0].script_signature,
@@ -2883,22 +2799,6 @@ mod tests {
     #[test]
     /// Checks that invalid p2pkh transaction signatures are validated as such
     fn test_fail_p2pkh_sig_script_empty() {
-        test_fail_p2pkh_sig_script_empty_common(None);
-    }
-
-    #[test]
-    /// Checks that invalid p2pkh transaction signatures are validated as such
-    fn test_fail_p2pkh_sig_script_empty_v0() {
-        test_fail_p2pkh_sig_script_empty_common(Some(NETWORK_VERSION_V0));
-    }
-
-    #[test]
-    /// Checks that invalid p2pkh transaction signatures are validated as such
-    fn test_fail_p2pkh_sig_script_empty_temp() {
-        test_fail_p2pkh_sig_script_empty_common(Some(NETWORK_VERSION_V0));
-    }
-
-    fn test_fail_p2pkh_sig_script_empty_common(address_version: Option<u64>) {
         let (pk, sk) = sign::gen_keypair();
         let outpoint = OutPoint {
             t_hash: hex::encode(vec![0, 0, 0]),
@@ -2912,7 +2812,6 @@ mod tests {
             previous_out: outpoint,
             signatures: vec![signature],
             pub_keys: vec![pk],
-            address_version,
         };
 
         let mut tx_ins = Vec::new();
@@ -2925,7 +2824,7 @@ mod tests {
             tx_ins.push(new_tx_in);
         }
 
-        let tx_out_pk = construct_address(&pk);
+        let tx_out_pk = P2PKHAddress::from_pubkey(&pk);
 
         assert!(!tx_has_valid_p2pkh_sig(
             &tx_ins[0].script_signature,
@@ -2937,22 +2836,6 @@ mod tests {
     #[test]
     /// Checks that invalid p2pkh transaction signatures are validated as such
     fn test_fail_p2pkh_sig_script_invalid_struct() {
-        test_fail_p2pkh_sig_script_invalid_struct_common(None);
-    }
-
-    #[test]
-    /// Checks that invalid p2pkh transaction signatures are validated as such
-    fn test_fail_p2pkh_sig_script_invalid_struct_v0() {
-        test_fail_p2pkh_sig_script_invalid_struct_common(Some(NETWORK_VERSION_V0));
-    }
-
-    #[test]
-    /// Checks that invalid p2pkh transaction signatures are validated as such
-    fn test_fail_p2pkh_sig_script_invalid_struct_temp() {
-        test_fail_p2pkh_sig_script_invalid_struct_common(Some(NETWORK_VERSION_TEMP));
-    }
-
-    fn test_fail_p2pkh_sig_script_invalid_struct_common(address_version: Option<u64>) {
         let (pk, sk) = sign::gen_keypair();
         let outpoint = OutPoint {
             t_hash: hex::encode(vec![0, 0, 0]),
@@ -2966,7 +2849,6 @@ mod tests {
             previous_out: outpoint,
             signatures: vec![signature],
             pub_keys: vec![pk],
-            address_version,
         };
 
         let mut tx_ins = Vec::new();
@@ -2977,13 +2859,13 @@ mod tests {
             new_tx_in
                 .script_signature
                 .stack
-                .push(StackEntry::Bytes("".to_string()));
+                .push(StackEntry::Bytes("".as_bytes().to_vec()));
             new_tx_in.previous_out = Some(entry.previous_out);
 
             tx_ins.push(new_tx_in);
         }
 
-        let tx_out_pk = construct_address(&pk);
+        let tx_out_pk = P2PKHAddress::from_pubkey(&pk);
 
         assert!(!tx_has_valid_p2pkh_sig(
             &tx_ins[0].script_signature,
@@ -2995,22 +2877,6 @@ mod tests {
     #[test]
     /// Checks that correct multisig validation signatures are validated as such
     fn test_pass_multisig_validation_valid() {
-        test_pass_multisig_validation_valid_common(None);
-    }
-
-    #[test]
-    /// Checks that correct multisig validation signatures are validated as such
-    fn test_pass_multisig_validation_valid_v0() {
-        test_pass_multisig_validation_valid_common(Some(NETWORK_VERSION_V0));
-    }
-
-    #[test]
-    /// Checks that correct multisig validation signatures are validated as such
-    fn test_pass_multisig_validation_valid_temp() {
-        test_pass_multisig_validation_valid_common(Some(NETWORK_VERSION_TEMP));
-    }
-
-    fn test_pass_multisig_validation_valid_common(address_version: Option<u64>) {
         let (first_pk, first_sk) = sign::gen_keypair();
         let (second_pk, second_sk) = sign::gen_keypair();
         let (third_pk, third_sk) = sign::gen_keypair();
@@ -3024,7 +2890,6 @@ mod tests {
             previous_out: OutPoint::new(check_data, 0),
             signatures: vec![first_sig, second_sig],
             pub_keys: vec![first_pk, second_pk, third_pk],
-            address_version,
         };
 
         let tx_ins = create_multisig_tx_ins(vec![tx_const], m);
@@ -3035,29 +2900,7 @@ mod tests {
     #[test]
     /// Validate tx_is_valid for multiple TxIn configurations
     fn test_tx_is_valid() {
-        test_tx_is_valid_common(None, OpCodes::OP_HASH256, None, false);
-    }
-
-    #[test]
-    /// Validate tx_is_valid for multiple TxIn configurations
-    fn test_tx_is_valid_v0() {
-        test_tx_is_valid_common(
-            Some(NETWORK_VERSION_V0),
-            OpCodes::OP_HASH256_V0,
-            None,
-            false,
-        );
-    }
-
-    #[test]
-    /// Validate tx_is_valid for multiple TxIn configurations
-    fn test_tx_is_valid_temp() {
-        test_tx_is_valid_common(
-            Some(NETWORK_VERSION_TEMP),
-            OpCodes::OP_HASH256_TEMP,
-            None,
-            false,
-        );
+        test_tx_is_valid_common(OpCodes::OP_HASH256, None, false);
     }
 
     #[test]
@@ -3067,7 +2910,7 @@ mod tests {
         let tx_out = TxOut {
             value: Asset::Token(TokenAmount(0)),
             locktime: 0,
-            script_public_key: Some("".to_string()),
+            script_public_key: Placeholder::placeholder(),
         };
 
         tx.outputs.push(tx_out);
@@ -3081,19 +2924,18 @@ mod tests {
     /// Validate tx_is_valid for locktime
     fn test_tx_is_valid_locktime() {
         assert!(
-            test_tx_is_valid_common(None, OpCodes::OP_HASH256, Some(99), false)
-                && !test_tx_is_valid_common(None, OpCodes::OP_HASH256, Some(1000000000), false)
+            test_tx_is_valid_common(OpCodes::OP_HASH256, Some(99), false)
+                && !test_tx_is_valid_common(OpCodes::OP_HASH256, Some(1000000000), false)
         );
     }
 
     #[test]
     /// Validate tx_is_valid for fees
     fn test_tx_is_valid_fees() {
-        test_tx_is_valid_common(None, OpCodes::OP_HASH256, None, true);
+        test_tx_is_valid_common(OpCodes::OP_HASH256, None, true);
     }
 
     fn test_tx_is_valid_common(
-        address_version: Option<u64>,
         op_hash256: OpCodes,
         locktime: Option<u64>,
         with_fees: bool,
@@ -3104,9 +2946,9 @@ mod tests {
         let (pk, sk) = sign::gen_keypair();
         let tx_hash = hex::encode(vec![0, 0, 0]);
         let tx_outpoint = OutPoint::new(tx_hash, 0);
-        let script_public_key = construct_address_for(&pk, address_version);
+        let script_public_key = P2PKHAddress::from_pubkey(&pk);
         let tx_in_previous_out =
-            TxOut::new_token_amount(script_public_key.clone(), TokenAmount(5), locktime);
+            TxOut::new_token_amount(script_public_key.wrap(), TokenAmount(5), locktime);
         let ongoing_tx_outs = vec![tx_in_previous_out.clone()];
         let tx_in = TxIn {
             script_signature: Script::new(),
@@ -3121,19 +2963,19 @@ mod tests {
             // 0. Happy case: valid test
             (
                 vec![
-                    StackEntry::Bytes(valid_bytes),
+                    StackEntry::Bytes(hex::decode(valid_bytes).unwrap()),
                     StackEntry::Signature(valid_sig),
                     StackEntry::PubKey(pk),
                     StackEntry::Op(OpCodes::OP_DUP),
                     StackEntry::Op(op_hash256),
-                    StackEntry::Bytes(script_public_key),
+                    StackEntry::Bytes(script_public_key.get_hash().to_vec()),
                     StackEntry::Op(OpCodes::OP_EQUALVERIFY),
                     StackEntry::Op(OpCodes::OP_CHECKSIG),
                 ],
                 true,
             ),
             // 2. Empty script
-            (vec![StackEntry::Bytes("".to_string())], false),
+            (vec![StackEntry::Bytes("".as_bytes().to_vec())], false),
         ];
 
         //
@@ -3281,7 +3123,7 @@ mod tests {
     ///
     /// 1. Inputs contain two `TxIn`s for `Item`s of amount `3` and `Token`s of amount `2`
     /// 2. Outputs contain `TxOut`s for `Item`s of amount `1` and Tokens of amount `1`
-    /// 3. `TxIn` DRS does not match `TxOut` DRS for `Item`s; Amount of `Item`s and `Token`s spent does not match;             
+    /// 3. `TxIn` DRS does not match `TxOut` DRS for `Item`s; Amount of `Item`s and `Token`s spent does not match;
     fn test_tx_drs_items_and_tokens_failure_amount_and_drs_mismatch() {
         let test_metadata: Option<String> = Some(
             "{\"name\":\"test\",\"description\":\"test\",\"image\":\"test\",\"url\":\"test\"}"
@@ -3324,22 +3166,6 @@ mod tests {
     #[test]
     /// Checks that incorrect member interpret scripts are validated as such
     fn test_fail_interpret_valid() {
-        test_fail_interpret_valid_common(None);
-    }
-
-    #[test]
-    /// Checks that incorrect member interpret scripts are validated as such
-    fn test_fail_interpret_valid_v0() {
-        test_fail_interpret_valid_common(Some(NETWORK_VERSION_V0));
-    }
-
-    #[test]
-    /// Checks that incorrect member interpret scripts are validated as such
-    fn test_fail_interpret_valid_temp() {
-        test_fail_interpret_valid_common(Some(NETWORK_VERSION_TEMP));
-    }
-
-    fn test_fail_interpret_valid_common(address_version: Option<u64>) {
         let (_pk, sk) = sign::gen_keypair();
         let (pk, _sk) = sign::gen_keypair();
         let t_hash = hex::encode(vec![0, 0, 0]);
@@ -3349,7 +3175,6 @@ mod tests {
             previous_out: OutPoint::new(t_hash, 0),
             signatures: vec![signature],
             pub_keys: vec![pk],
-            address_version,
         };
 
         let tx_ins = create_multisig_member_tx_ins(vec![tx_const]);
@@ -3360,22 +3185,6 @@ mod tests {
     #[test]
     /// Checks that interpret scripts are validated as such
     fn test_pass_interpret_valid() {
-        test_pass_interpret_valid_common(None);
-    }
-
-    #[test]
-    /// Checks that interpret scripts are validated as such
-    fn test_pass_interpret_valid_v0() {
-        test_pass_interpret_valid_common(Some(NETWORK_VERSION_V0));
-    }
-
-    #[test]
-    /// Checks that interpret scripts are validated as such
-    fn test_pass_interpret_valid_temp() {
-        test_pass_interpret_valid_common(Some(NETWORK_VERSION_TEMP));
-    }
-
-    fn test_pass_interpret_valid_common(address_version: Option<u64>) {
         let (pk, sk) = sign::gen_keypair();
         let t_hash = hex::encode(vec![0, 0, 0]);
         let signature = sign::sign_detached(t_hash.as_bytes(), &sk);
@@ -3384,7 +3193,6 @@ mod tests {
             previous_out: OutPoint::new(t_hash, 0),
             signatures: vec![signature],
             pub_keys: vec![pk],
-            address_version,
         };
 
         let tx_ins = create_multisig_member_tx_ins(vec![tx_const]);

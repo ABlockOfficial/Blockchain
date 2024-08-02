@@ -1,11 +1,12 @@
 use crate::primitives::asset::Asset;
 use serde::{Deserialize, Serialize};
+use crate::primitives::address::{AnyAddress, TxInsAddress};
 
 /// The expectation to be met in a specific DRUID transaction
-#[derive(Default, Clone, Debug, Ord, Eq, PartialEq, Serialize, Deserialize, PartialOrd)]
+#[derive(Clone, Debug, Ord, Eq, PartialEq, Serialize, Deserialize, PartialOrd)]
 pub struct DruidExpectation {
-    pub from: String,
-    pub to: String,
+    pub from: TxInsAddress,
+    pub to: AnyAddress,
     pub asset: Asset,
 }
 
@@ -16,17 +17,10 @@ pub struct DruidExpectation {
 /// `expect_value`          - The value expected by another party for this tx
 /// `expect_value_amount`   - The amount of the asset expected by another party for this tx
 /// `expect_address`        - The address the other party is expected to pay to
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DdeValues {
     pub druid: String,
     pub participants: usize,
     pub expectations: Vec<DruidExpectation>,
     pub genesis_hash: Option<String>,
-}
-
-impl DdeValues {
-    /// Creates a new DdeValues instance
-    pub fn new() -> Self {
-        Default::default()
-    }
 }
